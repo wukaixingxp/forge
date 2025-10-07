@@ -1,0 +1,2112 @@
+Warning: setting HYPERACTOR_CODEC_MAX_FRAME_LENGTH since this needs to be set to enable large RPC calls via Monarch
+INFO 10-07 13:14:10 [__init__.py:235] Automatically detected platform cuda.
+Spawning single actor SandboxedPythonCoder
+Launcher not provided, remote allocations will not work.
+Spawning single actor DatasetActor
+Spawning Service for Policy
+Spawning single actor RLTrainer
+Spawning single actor ReplayBuffer
+Spawning single actor ComputeAdvantages
+Spawning Service for ReferenceModel
+Spawning Service for RewardActor
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:44 INFO[0m Building 0-D device mesh with [], []
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:44 INFO[0m [GC] Initial GC collection took 0.00 seconds
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:46 INFO[0m Total parameter count: dense 2,031,739,904, sparse 0, active 2,031,739,904
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:46 INFO[0m Applied selective activation checkpointing to the model
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:46 INFO[0m Checkpointing active. Checkpoints will be loaded from and saved to checkpoint
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:46 INFO[0m Mixed precision training is handled by AMP
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:46 INFO[0m loading from HF safetensors from --checkpoint.initial_load_path: /home/kaiwu/.cache/huggingface/hub/models--Qwen--Qwen3-1.7B/snapshots/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:46 INFO[0m Loading the checkpoint from /home/kaiwu/.cache/huggingface/hub/models--Qwen--Qwen3-1.7B/snapshots/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e.
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:47 INFO[0m [GC] GC collection for checkpoint loading. took 0.05 seconds
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:14:47 INFO[0m Finished loading the checkpoint in 1.05 seconds.
+INFO 10-07 13:14:53 [config.py:1604] Using max model len 40960
+INFO 10-07 13:14:53 [config.py:2434] Chunked prefill is enabled with max_num_batched_tokens=16384.
+[0] INFO 10-07 13:14:55 [__init__.py:235] Automatically detected platform cuda.
+[0] INFO 10-07 13:14:56 [__init__.py:235] Automatically detected platform cuda.
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:56 INFO[0m Building 0-D device mesh with [], []
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:56 INFO[0m [GC] Initial GC collection took 0.00 seconds
+[0] WARNING 10-07 13:14:58 [multiproc_worker_utils.py:307] Reducing Torch parallelism from 112 threads to 1 to avoid unnecessary CPU contention. Set OMP_NUM_THREADS in the external environment to tune this value as needed.
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:58 INFO[0m Total parameter count: dense 2,031,739,904, sparse 0, active 2,031,739,904
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:58 INFO[0m Applied selective activation checkpointing to the model
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:58 INFO[0m Checkpointing active. Checkpoints will be loaded from and saved to checkpoint
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:58 INFO[0m Mixed precision training is handled by AMP
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:58 INFO[0m loading from HF safetensors from --checkpoint.initial_load_path: /home/kaiwu/.cache/huggingface/hub/models--Qwen--Qwen3-1.7B/snapshots/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:58 INFO[0m Loading the checkpoint from /home/kaiwu/.cache/huggingface/hub/models--Qwen--Qwen3-1.7B/snapshots/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e.
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:59 INFO[0m [GC] GC collection for checkpoint loading. took 0.05 seconds
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:14:59 INFO[0m Finished loading the checkpoint in 1.14 seconds.
+[0] [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[0] [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[0] [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[0] [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[0] [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[0] INFO 10-07 13:15:02 [parallel_state.py:1102] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[0] WARNING 10-07 13:15:02 [topk_topp_sampler.py:59] FlashInfer is not available. Falling back to the PyTorch-native implementation of top-p & top-k sampling. For the best performance, please install FlashInfer.
+[0] INFO 10-07 13:15:02 [gpu_model_runner.py:1843] Starting to load model Qwen/Qwen3-1.7B...
+[0] INFO 10-07 13:15:02 [gpu_model_runner.py:1875] Loading model from scratch...
+[0] INFO 10-07 13:15:03 [cuda.py:290] Using Flash Attention backend on V1 engine.
+[0] INFO 10-07 13:15:03 [weight_utils.py:296] Using model weights format ['*.safetensors']
+[0] INFO 10-07 13:15:04 [default_loader.py:262] Loading weights took 0.78 seconds
+[0] INFO 10-07 13:15:04 [gpu_model_runner.py:1892] Model loading took 3.2152 GiB and 1.533720 seconds
+[0] INFO 10-07 13:15:11 [config.py:1604] Using max model len 40960
+[0] INFO 10-07 13:15:11 [config.py:2434] Chunked prefill is enabled with max_num_batched_tokens=16384.
+[0] WARNING 10-07 13:15:11 [config.py:1528] Default sampling parameters have been overridden by the model's Hugging Face generation config recommended from the model creator. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`.
+[0] INFO 10-07 13:15:17 [backends.py:530] Using cache directory: /home/kaiwu/.cache/vllm/torch_compile_cache/56af382207/rank_0_0/backbone for vLLM's torch.compile
+[0] INFO 10-07 13:15:17 [backends.py:541] Dynamo bytecode transform time: 5.07 s
+[0] INFO 10-07 13:15:20 [backends.py:161] Directly load the compiled graph(s) for dynamic shape from the cache, took 2.017 s
+[0] INFO 10-07 13:15:29 [monitor.py:34] torch.compile takes 5.07 s in total
+[0] INFO 10-07 13:15:30 [gpu_worker.py:255] Available KV cache memory: 116.85 GiB
+[0] INFO 10-07 13:15:30 [kv_cache_utils.py:833] GPU KV cache size: 1,094,016 tokens
+[0] INFO 10-07 13:15:30 [kv_cache_utils.py:837] Maximum concurrency for 40,960 tokens per request: 26.71x
+[0] INFO 10-07 13:15:32 [gpu_model_runner.py:2485] Graph capturing finished in 2 secs, took 0.61 GiB
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:03 INFO[0m Pushing weights for policy version 1
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:10 INFO[0m Completed weights push in 6.83 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:16:11 INFO[0m [PolicyWorker::update] start updating weights to version 1
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:16:11 INFO[0m Loading policy_ver_0000000001.dcp_whole_state_dict from DCP with handle policy_ver_0000000001.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:16:11 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:16:18 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:16:18 INFO[0m Weight update completed (now v1)
+All services initialized successfully!
+Starting GRPO with 1 rollout threads, 1 training threads
+WandbBackend: Logged 96 metrics at step 1
+=== [global_logger_TYfz_r0] - METRICS STEP 1 ===
+  buffer/add/count_episodes_added: 12.0
+  buffer/evict/avg_policy_staleness: 0.0
+  buffer/evict/max_policy_staleness: 0.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 275.0
+  buffer_perf/sample/total_duration_avg_s: 5.63349456272342e-05
+  buffer_perf/sample/total_duration_max_s: 0.0037082298658788204
+  dataset/sample/avg_sample_len: 2380.5
+  dataset/sample/count_samples_generated: 4.0
+  main/continuous_rollouts/count_rollout_iterations: 3.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 6.477697752416134e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 7.52951018512249e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 2.6762890360939005
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 8.022959970170632
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 9.65832129563205
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 10.667977403849363
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.17491975038622817
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.2504339430015534
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.24177119166900715
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.7053780311252922
+  main_perf/continuous_rollouts/total_duration_avg_s: 12.789188268361613
+  main_perf/continuous_rollouts/total_duration_max_s: 19.688360668951645
+  main_perf/continuous_training/push_weights/duration_avg_s: 6.836813980946317
+  main_perf/continuous_training/push_weights/duration_max_s: 6.836813980946317
+  main_perf/continuous_training/total_duration_avg_s: 44.701092537958175
+  main_perf/continuous_training/total_duration_max_s: 44.701092537958175
+  main_perf/continuous_training/train_step/duration_avg_s: 1.8638236110564321
+  main_perf/continuous_training/train_step/duration_max_s: 1.8638236110564321
+  main_perf/continuous_training/update_weights/duration_avg_s: 7.419856955995783
+  main_perf/continuous_training/update_weights/duration_max_s: 7.419856955995783
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 28.580595324980095
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 28.580595324980095
+  policy/generate/avg_tokens_generated: 1641.1666666666667
+  policy/generate/count_requests: 4.0
+  policy/generate/count_sequences_completed: 12.0
+  policy/generate/sum_tokens_generated: 19694.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 9.344288736979166
+  policy_perf/generate/generate/duration_max_s: 9.744279296875
+  policy_perf/generate/process_inputs/duration_avg_s: 0.006551605463027954
+  policy_perf/generate/process_inputs/duration_max_s: 0.014345184326171875
+  policy_perf/generate/prompt_truncation/duration_avg_s: 9.651200147345661e-05
+  policy_perf/generate/prompt_truncation/duration_max_s: 0.00028336000442504884
+  policy_perf/generate/total_duration_avg_s: 9.351047233113553
+  policy_perf/generate/total_duration_max_s: 9.759087457209825
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 6.50281005859375
+  policy_worker_perf/update/total_duration_max_s: 6.50281005859375
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.010230346997578939
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.01984809684753418
+  reference_perf/forward/count_forward_passes: 3.0
+  reference_perf/forward/forward/duration_avg_s: 0.14071105194091796
+  reference_perf/forward/forward/duration_max_s: 0.22108294677734375
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.00043725867569446565
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0006688960194587707
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.4880523681640625
+  reference_perf/forward/memory_peak_max_gb: 10.772823333740234
+  reference_perf/forward/to_device/duration_avg_s: 0.0004950613280137379
+  reference_perf/forward/to_device/duration_max_s: 0.0006355199813842773
+  reference_perf/forward/total_duration_avg_s: 0.15187701494215677
+  reference_perf/forward/total_duration_max_s: 0.24202640361525118
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 0.8000000000000002
+  reward/evaluate_response/avg_total_reward: -4.6
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 12.0
+  reward/evaluate_response/count_ThinkingReward_calls: 12.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.3464101615137753
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -120.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 9.600000000000001
+  rl_trainer/avg_grpo_loss: 1.9937753677368164e-05
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 6.83284814453125
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 6.83284814453125
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0005928000211715698
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0005928000211715698
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0009783679842948914
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0009783679842948914
+  rl_trainer_perf/push_weights/total_duration_avg_s: 6.834473904535175
+  rl_trainer_perf/push_weights/total_duration_max_s: 6.834473904535175
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 1.8304432373046875
+  rl_trainer_perf/step/forward_backward/duration_max_s: 1.8304432373046875
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 7.631847381591797
+  rl_trainer_perf/step/memory_peak_max_gb: 45.75857973098755
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.027546623229980468
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.027546623229980468
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0007354879975318909
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0007354879975318909
+  rl_trainer_perf/step/total_duration_avg_s: 1.8592703725099564
+  rl_trainer_perf/step/total_duration_max_s: 1.8592703725099564
+==============================
+
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:16:27 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:28 INFO[0m [GC] Performing periodic GC collection took 0.21 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:28 INFO[0m Pushing weights for policy version 2
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:36 INFO[0m Completed weights push in 7.29 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:16:37 INFO[0m [PolicyWorker::update] start updating weights to version 2
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:16:37 INFO[0m Loading policy_ver_0000000002.dcp_whole_state_dict from DCP with handle policy_ver_0000000002.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:16:37 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:16:42 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:16:42 INFO[0m Weight update completed (now v2)
+Dropping weights @ version 1
+Dropped weights @ version 1, took 0.40 seconds
+WandbBackend: Logged 98 metrics at step 2
+=== [global_logger_TYfz_r0] - METRICS STEP 2 ===
+  buffer/add/count_episodes_added: 8.0
+  buffer/evict/avg_policy_staleness: 0.9947916666666666
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 96.0
+  buffer_perf/sample/total_duration_avg_s: 6.284896032108615e-05
+  buffer_perf/sample/total_duration_max_s: 0.0006715341005474329
+  dataset/sample/avg_sample_len: 2341.5
+  dataset/sample/count_samples_generated: 2.0
+  main/continuous_rollouts/count_rollout_iterations: 2.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 4.027911927551031e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 4.5459019020199776e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.0025082490174099803
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.002508966950699687
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 12.699490814004093
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 15.798132211901248
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.13766587839927524
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.13833713391795754
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.00842861644923687
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.011008936911821365
+  main_perf/continuous_rollouts/total_duration_avg_s: 12.880924900528044
+  main_perf/continuous_rollouts/total_duration_max_s: 15.97598992404528
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.3992859029676765
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.3992859029676765
+  main_perf/continuous_training/push_weights/duration_avg_s: 7.294762494973838
+  main_perf/continuous_training/push_weights/duration_max_s: 7.294762494973838
+  main_perf/continuous_training/total_duration_avg_s: 24.86624033912085
+  main_perf/continuous_training/total_duration_max_s: 24.86624033912085
+  main_perf/continuous_training/train_step/duration_avg_s: 0.9776083289179951
+  main_perf/continuous_training/train_step/duration_max_s: 0.9776083289179951
+  main_perf/continuous_training/update_weights/duration_avg_s: 6.493347994051874
+  main_perf/continuous_training/update_weights/duration_max_s: 6.493347994051874
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 9.701231446117163
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 9.701231446117163
+  policy/generate/avg_tokens_generated: 1922.625
+  policy/generate/count_requests: 2.0
+  policy/generate/count_sequences_completed: 8.0
+  policy/generate/sum_tokens_generated: 15381.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 12.69032958984375
+  policy_perf/generate/generate/duration_max_s: 15.7896396484375
+  policy_perf/generate/process_inputs/duration_avg_s: 0.002130848050117493
+  policy_perf/generate/process_inputs/duration_max_s: 0.0021435201168060304
+  policy_perf/generate/prompt_truncation/duration_avg_s: 3.0719999922439454e-06
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.103999886661768e-06
+  policy_perf/generate/total_duration_avg_s: 12.692536053890361
+  policy_perf/generate/total_duration_max_s: 15.791902880413923
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.23610986328125
+  policy_worker_perf/update/total_duration_max_s: 5.23610986328125
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.005448783874511719
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.005477119922637939
+  reference_perf/forward/count_forward_passes: 2.0
+  reference_perf/forward/forward/duration_avg_s: 0.10023348617553711
+  reference_perf/forward/forward/duration_max_s: 0.1005331802368164
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.0004969280064105987
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0005057920217514038
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0004797279983758926
+  reference_perf/forward/to_device/duration_max_s: 0.0005559999942779541
+  reference_perf/forward/total_duration_avg_s: 0.1066620460547274
+  reference_perf/forward/total_duration_max_s: 0.10700079604843632
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 0.6
+  reward/evaluate_response/avg_total_reward: -4.7
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 8.0
+  reward/evaluate_response/count_ThinkingReward_calls: 8.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.4
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -80.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 4.8
+  rl_trainer/avg_grpo_loss: 0.1784133017063141
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 7.2905615234375
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 7.2905615234375
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.000653823971748352
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.000653823971748352
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0009639040231704712
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0009639040231704712
+  rl_trainer_perf/push_weights/total_duration_avg_s: 7.292233971431852
+  rl_trainer_perf/push_weights/total_duration_max_s: 7.292233971431852
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.952474609375
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.952474609375
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.013804767608642578
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.013804767608642578
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0010087039470672607
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0010087039470672607
+  rl_trainer_perf/step/total_duration_avg_s: 0.9673355369307101
+  rl_trainer_perf/step/total_duration_max_s: 0.9673355369307101
+==============================
+
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:16:52 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:52 INFO[0m [GC] Performing periodic GC collection took 0.14 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:16:53 INFO[0m Pushing weights for policy version 3
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:00 INFO[0m Completed weights push in 7.28 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:17:01 INFO[0m [PolicyWorker::update] start updating weights to version 3
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:17:01 INFO[0m Loading policy_ver_0000000003.dcp_whole_state_dict from DCP with handle policy_ver_0000000003.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:17:01 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:17:07 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:17:07 INFO[0m Weight update completed (now v3)
+Dropping weights @ version 2
+Dropped weights @ version 2, took 0.39 seconds
+WandbBackend: Logged 98 metrics at step 3
+=== [global_logger_TYfz_r0] - METRICS STEP 3 ===
+  buffer/add/count_episodes_added: 8.0
+  buffer/evict/avg_policy_staleness: 0.9945652173913043
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 92.0
+  buffer_perf/sample/total_duration_avg_s: 5.7579779936729565e-05
+  buffer_perf/sample/total_duration_max_s: 0.0005863311234861612
+  dataset/sample/avg_sample_len: 2417.5
+  dataset/sample/count_samples_generated: 2.0
+  main/continuous_rollouts/count_rollout_iterations: 2.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 5.6611490435898304e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 6.760004907846451e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.0027066724142059684
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.00295593892224133
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 12.034555228077807
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 14.54926383914426
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.1379469649400562
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.13843524386174977
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.00981628056615591
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.013338144170120358
+  main_perf/continuous_rollouts/total_duration_avg_s: 12.219901363016106
+  main_perf/continuous_rollouts/total_duration_max_s: 14.729304993059486
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.39197252388112247
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.39197252388112247
+  main_perf/continuous_training/push_weights/duration_avg_s: 7.282098816009238
+  main_perf/continuous_training/push_weights/duration_max_s: 7.282098816009238
+  main_perf/continuous_training/total_duration_avg_s: 24.797877742908895
+  main_perf/continuous_training/total_duration_max_s: 24.797877742908895
+  main_perf/continuous_training/train_step/duration_avg_s: 0.9184089489281178
+  main_perf/continuous_training/train_step/duration_max_s: 0.9184089489281178
+  main_perf/continuous_training/update_weights/duration_avg_s: 6.930395301198587
+  main_perf/continuous_training/update_weights/duration_max_s: 6.930395301198587
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 9.274998528882861
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 9.274998528882861
+  policy/generate/avg_tokens_generated: 1987.0
+  policy/generate/count_requests: 2.0
+  policy/generate/count_sequences_completed: 8.0
+  policy/generate/sum_tokens_generated: 15896.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 12.02489990234375
+  policy_perf/generate/generate/duration_max_s: 14.539775390625
+  policy_perf/generate/process_inputs/duration_avg_s: 0.0028601280450820925
+  policy_perf/generate/process_inputs/duration_max_s: 0.00306876802444458
+  policy_perf/generate/prompt_truncation/duration_avg_s: 3.0720001086592673e-06
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.0720001086592673e-06
+  policy_perf/generate/total_duration_avg_s: 12.027842654392124
+  policy_perf/generate/total_duration_max_s: 14.5429889906561
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.62881298828125
+  policy_worker_perf/update/total_duration_max_s: 5.62881298828125
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.005412271976470947
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.005417920112609863
+  reference_perf/forward/count_forward_passes: 2.0
+  reference_perf/forward/forward/duration_avg_s: 0.1003923683166504
+  reference_perf/forward/forward/duration_max_s: 0.10060598754882813
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.0004953440129756928
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0005214080214500427
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0004954719990491866
+  reference_perf/forward/to_device/duration_max_s: 0.0005374079942703247
+  reference_perf/forward/total_duration_avg_s: 0.1067985763050383
+  reference_perf/forward/total_duration_max_s: 0.10700195568660274
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 0.5
+  reward/evaluate_response/avg_total_reward: -4.75
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 8.0
+  reward/evaluate_response/count_ThinkingReward_calls: 8.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.3872983346207417
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -80.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 4.0
+  rl_trainer/avg_grpo_loss: 0.4024071991443634
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 7.27802587890625
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 7.27802587890625
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0007049919962882996
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0007049919962882996
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0008809599876403809
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0008809599876403809
+  rl_trainer_perf/push_weights/total_duration_avg_s: 7.279687158890068
+  rl_trainer_perf/push_weights/total_duration_max_s: 7.279687158890068
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.8957901000976562
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.8957901000976562
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.014012960433959961
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.014012960433959961
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0010728000402450563
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0010728000402450563
+  rl_trainer_perf/step/total_duration_avg_s: 0.9109298125728965
+  rl_trainer_perf/step/total_duration_max_s: 0.9109298125728965
+==============================
+
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:17:13 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:13 INFO[0m [GC] Performing periodic GC collection took 0.17 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:14 INFO[0m Pushing weights for policy version 4
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:22 INFO[0m Completed weights push in 7.35 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:17:22 INFO[0m [PolicyWorker::update] start updating weights to version 4
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:17:22 INFO[0m Loading policy_ver_0000000004.dcp_whole_state_dict from DCP with handle policy_ver_0000000004.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:17:22 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:17:27 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:17:27 INFO[0m Weight update completed (now v4)
+Dropping weights @ version 3
+Dropped weights @ version 3, took 0.39 seconds
+WandbBackend: Logged 98 metrics at step 4
+=== [global_logger_TYfz_r0] - METRICS STEP 4 ===
+  buffer/add/count_episodes_added: 8.0
+  buffer/evict/avg_policy_staleness: 0.9913793103448276
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 58.0
+  buffer_perf/sample/total_duration_avg_s: 6.41928174821981e-05
+  buffer_perf/sample/total_duration_max_s: 0.0006100358441472054
+  dataset/sample/avg_sample_len: 1978.5
+  dataset/sample/count_samples_generated: 2.0
+  main/continuous_rollouts/count_rollout_iterations: 2.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 7.42659904062748e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 7.460406050086021e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.0028016180731356144
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.003130675060674548
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 10.034350712434389
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 11.47190512297675
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.13910253741778433
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.14096153783611953
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.008875556639395654
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.01146050519309938
+  main_perf/continuous_rollouts/total_duration_avg_s: 10.220880016568117
+  main_perf/continuous_rollouts/total_duration_max_s: 11.656712820054963
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.39020163216628134
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.39020163216628134
+  main_perf/continuous_training/push_weights/duration_avg_s: 7.349146143067628
+  main_perf/continuous_training/push_weights/duration_max_s: 7.349146143067628
+  main_perf/continuous_training/total_duration_avg_s: 20.01331624109298
+  main_perf/continuous_training/total_duration_max_s: 20.01331624109298
+  main_perf/continuous_training/train_step/duration_avg_s: 0.9244556059129536
+  main_perf/continuous_training/train_step/duration_max_s: 0.9244556059129536
+  main_perf/continuous_training/update_weights/duration_avg_s: 5.526568705914542
+  main_perf/continuous_training/update_weights/duration_max_s: 5.526568705914542
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 5.822941048070788
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 5.822941048070788
+  policy/generate/avg_tokens_generated: 1316.75
+  policy/generate/count_requests: 2.0
+  policy/generate/count_sequences_completed: 8.0
+  policy/generate/sum_tokens_generated: 10534.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 10.02562353515625
+  policy_perf/generate/generate/duration_max_s: 11.463388671875
+  policy_perf/generate/process_inputs/duration_avg_s: 0.0024464319944381713
+  policy_perf/generate/process_inputs/duration_max_s: 0.002555392026901245
+  policy_perf/generate/prompt_truncation/duration_avg_s: 3.0560001032426954e-06
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.0720001086592673e-06
+  policy_perf/generate/total_duration_avg_s: 10.028142671151668
+  policy_perf/generate/total_duration_max_s: 11.466083327903645
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.22369189453125
+  policy_worker_perf/update/total_duration_max_s: 5.22369189453125
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.005414079904556274
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.005421055793762207
+  reference_perf/forward/count_forward_passes: 2.0
+  reference_perf/forward/forward/duration_avg_s: 0.10013750457763672
+  reference_perf/forward/forward/duration_max_s: 0.1003183364868164
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.000497744008898735
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0005124800205230713
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0004747200012207031
+  reference_perf/forward/to_device/duration_max_s: 0.0005116159915924072
+  reference_perf/forward/total_duration_avg_s: 0.1065271524921991
+  reference_perf/forward/total_duration_max_s: 0.10672316849092021
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 1.0
+  reward/evaluate_response/avg_total_reward: -4.5
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 8.0
+  reward/evaluate_response/count_ThinkingReward_calls: 8.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.0
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -80.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 8.0
+  rl_trainer/avg_grpo_loss: 0.23853947222232819
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 7.3445791015625
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 7.3445791015625
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0007193920016288758
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0007193920016288758
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0009147199988365173
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0009147199988365173
+  rl_trainer_perf/push_weights/total_duration_avg_s: 7.3462947495654225
+  rl_trainer_perf/push_weights/total_duration_max_s: 7.3462947495654225
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.8929303588867188
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.8929303588867188
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.013924320220947266
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.013924320220947266
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.001608191967010498
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.001608191967010498
+  rl_trainer_perf/step/total_duration_avg_s: 0.9085277670770884
+  rl_trainer_perf/step/total_duration_max_s: 0.9085277670770884
+==============================
+
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:17:35 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:35 INFO[0m [GC] Performing periodic GC collection took 0.16 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:36 INFO[0m Pushing weights for policy version 5
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:42 INFO[0m Completed weights push in 6.70 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:17:44 INFO[0m [PolicyWorker::update] start updating weights to version 5
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:17:44 INFO[0m Loading policy_ver_0000000005.dcp_whole_state_dict from DCP with handle policy_ver_0000000005.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:17:44 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:17:50 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:17:50 INFO[0m Weight update completed (now v5)
+Dropping weights @ version 4
+Dropped weights @ version 4, took 0.40 seconds
+WandbBackend: Logged 98 metrics at step 5
+=== [global_logger_TYfz_r0] - METRICS STEP 5 ===
+  buffer/add/count_episodes_added: 8.0
+  buffer/evict/avg_policy_staleness: 0.9931506849315068
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 73.0
+  buffer_perf/sample/total_duration_avg_s: 6.198262706501027e-05
+  buffer_perf/sample/total_duration_max_s: 0.00069966702722013
+  dataset/sample/avg_sample_len: 2135.0
+  dataset/sample/count_samples_generated: 2.0
+  main/continuous_rollouts/count_rollout_iterations: 2.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 4.2065978050231934e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 4.590512253344059e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.002975637558847666
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.003022728953510523
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 11.01208872999996
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 12.552278117043898
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.13804025249555707
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.13805672083981335
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.009465977549552917
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.012477902928367257
+  main_perf/continuous_rollouts/total_duration_avg_s: 11.196611993131228
+  main_perf/continuous_rollouts/total_duration_max_s: 12.733800345100462
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.3984576689545065
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.3984576689545065
+  main_perf/continuous_training/push_weights/duration_avg_s: 6.702167007140815
+  main_perf/continuous_training/push_weights/duration_max_s: 6.702167007140815
+  main_perf/continuous_training/total_duration_avg_s: 22.672265662113205
+  main_perf/continuous_training/total_duration_max_s: 22.672265662113205
+  main_perf/continuous_training/train_step/duration_avg_s: 0.9131250819191337
+  main_perf/continuous_training/train_step/duration_max_s: 0.9131250819191337
+  main_perf/continuous_training/update_weights/duration_avg_s: 7.29732570098713
+  main_perf/continuous_training/update_weights/duration_max_s: 7.29732570098713
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 7.361186928115785
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 7.361186928115785
+  policy/generate/avg_tokens_generated: 1630.125
+  policy/generate/count_requests: 2.0
+  policy/generate/count_sequences_completed: 8.0
+  policy/generate/sum_tokens_generated: 13041.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 11.003019042968749
+  policy_perf/generate/generate/duration_max_s: 12.543078125
+  policy_perf/generate/process_inputs/duration_avg_s: 0.002496656060218811
+  policy_perf/generate/process_inputs/duration_max_s: 0.0027196800708770754
+  policy_perf/generate/prompt_truncation/duration_avg_s: 2.0144000300206243e-05
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.724800050258636e-05
+  policy_perf/generate/total_duration_avg_s: 11.005614931027056
+  policy_perf/generate/total_duration_max_s: 12.545936365067261
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.51574072265625
+  policy_worker_perf/update/total_duration_max_s: 5.51574072265625
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.005431807994842529
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.005432735919952392
+  reference_perf/forward/count_forward_passes: 2.0
+  reference_perf/forward/forward/duration_avg_s: 0.10080307388305665
+  reference_perf/forward/forward/duration_max_s: 0.10106700897216797
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.0005140960216522216
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0005223680138587951
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0005127200037240982
+  reference_perf/forward/to_device/duration_max_s: 0.00058406400680542
+  reference_perf/forward/total_duration_avg_s: 0.10726480190316215
+  reference_perf/forward/total_duration_max_s: 0.10759088107803837
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 0.9
+  reward/evaluate_response/avg_total_reward: -4.55
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 8.0
+  reward/evaluate_response/count_ThinkingReward_calls: 8.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.26457513110645897
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -80.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 7.2
+  rl_trainer/avg_grpo_loss: 0.2687471807003021
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 6.6978251953125
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 6.6978251953125
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0006800000071525573
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0006800000071525573
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0008621439933776856
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0008621439933776856
+  rl_trainer_perf/push_weights/total_duration_avg_s: 6.699443403311074
+  rl_trainer_perf/push_weights/total_duration_max_s: 6.699443403311074
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.8859442749023437
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.8859442749023437
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.013568032264709472
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.013568032264709472
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0018589119911193847
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0018589119911193847
+  rl_trainer_perf/step/total_duration_avg_s: 0.9014602431580424
+  rl_trainer_perf/step/total_duration_max_s: 0.9014602431580424
+==============================
+
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:17:59 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:17:59 INFO[0m [GC] Performing periodic GC collection took 0.11 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:00 INFO[0m Pushing weights for policy version 6
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:07 INFO[0m Completed weights push in 7.36 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:18:09 INFO[0m [PolicyWorker::update] start updating weights to version 6
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:18:09 INFO[0m Loading policy_ver_0000000006.dcp_whole_state_dict from DCP with handle policy_ver_0000000006.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:09 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:18:14 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:18:14 INFO[0m Weight update completed (now v6)
+Dropping weights @ version 5
+Dropped weights @ version 5, took 0.41 seconds
+WandbBackend: Logged 98 metrics at step 6
+=== [global_logger_TYfz_r0] - METRICS STEP 6 ===
+  buffer/add/count_episodes_added: 8.0
+  buffer/evict/avg_policy_staleness: 0.9942528735632183
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 87.0
+  buffer_perf/sample/total_duration_avg_s: 5.856238508960982e-05
+  buffer_perf/sample/total_duration_max_s: 0.0006203230004757643
+  dataset/sample/avg_sample_len: 2097.5
+  dataset/sample/count_samples_generated: 2.0
+  main/continuous_rollouts/count_rollout_iterations: 2.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 4.8618996515870094e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 5.416199564933777e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.0027526620542630553
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.0030814160127192736
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 12.068303457926959
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 14.294207155006006
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.13930346595589072
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.13996683503501117
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.009216861566528678
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.012279553106054664
+  main_perf/continuous_rollouts/total_duration_avg_s: 12.25346039107535
+  main_perf/continuous_rollouts/total_duration_max_s: 14.474882445065305
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.40703651192598045
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.40703651192598045
+  main_perf/continuous_training/push_weights/duration_avg_s: 7.361609369982034
+  main_perf/continuous_training/push_weights/duration_max_s: 7.361609369982034
+  main_perf/continuous_training/total_duration_avg_s: 24.350921211997047
+  main_perf/continuous_training/total_duration_max_s: 24.350921211997047
+  main_perf/continuous_training/train_step/duration_avg_s: 0.87334965611808
+  main_perf/continuous_training/train_step/duration_max_s: 0.87334965611808
+  main_perf/continuous_training/update_weights/duration_avg_s: 6.958819899009541
+  main_perf/continuous_training/update_weights/duration_max_s: 6.958819899009541
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 8.750102353980765
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 8.750102353980765
+  policy/generate/avg_tokens_generated: 1685.25
+  policy/generate/count_requests: 2.0
+  policy/generate/count_sequences_completed: 8.0
+  policy/generate/sum_tokens_generated: 13482.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 12.059248046874998
+  policy_perf/generate/generate/duration_max_s: 14.28534375
+  policy_perf/generate/process_inputs/duration_avg_s: 0.0024414079189300536
+  policy_perf/generate/process_inputs/duration_max_s: 0.0024719679355621337
+  policy_perf/generate/prompt_truncation/duration_avg_s: 3.0879999976605178e-06
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.103999886661768e-06
+  policy_perf/generate/total_duration_avg_s: 12.061763678790303
+  policy_perf/generate/total_duration_max_s: 14.287951909928116
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.381318359375
+  policy_worker_perf/update/total_duration_max_s: 5.381318359375
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.005437744140625
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.005440800189971924
+  reference_perf/forward/count_forward_passes: 2.0
+  reference_perf/forward/forward/duration_avg_s: 0.1008754234313965
+  reference_perf/forward/forward/duration_max_s: 0.10093580627441406
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.0005055039823055267
+  reference_perf/forward/garbage_collection/duration_max_s: 0.000508575975894928
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0004604959934949875
+  reference_perf/forward/to_device/duration_max_s: 0.0004963839948177338
+  reference_perf/forward/total_duration_avg_s: 0.10728228754771407
+  reference_perf/forward/total_duration_max_s: 0.10730675044516101
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 0.7000000000000001
+  reward/evaluate_response/avg_total_reward: -4.6499999999999995
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 8.0
+  reward/evaluate_response/count_ThinkingReward_calls: 8.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.3872983346207416
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -80.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 5.6000000000000005
+  rl_trainer/avg_grpo_loss: 0.4106900691986084
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 7.35718017578125
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 7.35718017578125
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0007811200022697449
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0007811200022697449
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0008901759982109069
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0008901759982109069
+  rl_trainer_perf/push_weights/total_duration_avg_s: 7.358914639778435
+  rl_trainer_perf/push_weights/total_duration_max_s: 7.358914639778435
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.8468018188476563
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.8468018188476563
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.013912447929382324
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.013912447929382324
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0015589439868927003
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0015589439868927003
+  rl_trainer_perf/step/total_duration_avg_s: 0.8623270027637482
+  rl_trainer_perf/step/total_duration_max_s: 0.8623270027637482
+==============================
+
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:17 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:17 INFO[0m [GC] Performing periodic GC collection took 0.14 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:18 INFO[0m Pushing weights for policy version 7
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:24 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:26 INFO[0m Completed weights push in 7.32 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:18:29 INFO[0m [PolicyWorker::update] start updating weights to version 7
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:18:29 INFO[0m Loading policy_ver_0000000007.dcp_whole_state_dict from DCP with handle policy_ver_0000000007.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:29 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:18:34 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:18:34 INFO[0m Weight update completed (now v7)
+Dropping weights @ version 6
+Dropped weights @ version 6, took 0.39 seconds
+WandbBackend: Logged 98 metrics at step 7
+=== [global_logger_TYfz_r0] - METRICS STEP 7 ===
+  buffer/add/count_episodes_added: 12.0
+  buffer/evict/avg_policy_staleness: 0.9821428571428571
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 28.0
+  buffer_perf/sample/total_duration_avg_s: 7.255279758412923e-05
+  buffer_perf/sample/total_duration_max_s: 0.0006816410459578037
+  dataset/sample/avg_sample_len: 1989.3333333333333
+  dataset/sample/count_samples_generated: 3.0
+  main/continuous_rollouts/count_rollout_iterations: 3.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 3.9420401056607567e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 4.116399213671684e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.002523653364429871
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.0025481220800429583
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 6.557385604362935
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 8.173314054030925
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.13866844462851682
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.1392290808726102
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.008107640004406372
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.011986708035692573
+  main_perf/continuous_rollouts/total_duration_avg_s: 6.740843184990808
+  main_perf/continuous_rollouts/total_duration_max_s: 8.35585222998634
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.39029830088838935
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.39029830088838935
+  main_perf/continuous_training/push_weights/duration_avg_s: 7.3197990611661226
+  main_perf/continuous_training/push_weights/duration_max_s: 7.3197990611661226
+  main_perf/continuous_training/total_duration_avg_s: 20.095715614035726
+  main_perf/continuous_training/total_duration_max_s: 20.095715614035726
+  main_perf/continuous_training/train_step/duration_avg_s: 0.8967372898478061
+  main_perf/continuous_training/train_step/duration_max_s: 0.8967372898478061
+  main_perf/continuous_training/update_weights/duration_avg_s: 8.738441772991791
+  main_perf/continuous_training/update_weights/duration_max_s: 8.738441772991791
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 2.7504355730488896
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 2.7504355730488896
+  policy/generate/avg_tokens_generated: 857.9166666666666
+  policy/generate/count_requests: 3.0
+  policy/generate/count_sequences_completed: 12.0
+  policy/generate/sum_tokens_generated: 10295.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 6.5489736328125
+  policy_perf/generate/generate/duration_max_s: 8.1645302734375
+  policy_perf/generate/process_inputs/duration_avg_s: 0.002090197404225667
+  policy_perf/generate/process_inputs/duration_max_s: 0.0022565441131591796
+  policy_perf/generate/prompt_truncation/duration_avg_s: 3.093333293994268e-06
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.103999886661768e-06
+  policy_perf/generate/total_duration_avg_s: 6.551116480884763
+  policy_perf/generate/total_duration_max_s: 8.166931361554656
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.29556201171875
+  policy_worker_perf/update/total_duration_max_s: 5.29556201171875
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.005423807938893636
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.005435135841369629
+  reference_perf/forward/count_forward_passes: 3.0
+  reference_perf/forward/forward/duration_avg_s: 0.10010235850016276
+  reference_perf/forward/forward/duration_max_s: 0.10061606597900391
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.000514272004365921
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0005288640260696411
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0004420373241106669
+  reference_perf/forward/to_device/duration_max_s: 0.0004880639910697937
+  reference_perf/forward/total_duration_avg_s: 0.10648559043408994
+  reference_perf/forward/total_duration_max_s: 0.10694700980046765
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 1.0
+  reward/evaluate_response/avg_total_reward: -4.5
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 12.0
+  reward/evaluate_response/count_ThinkingReward_calls: 12.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.0
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -120.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 12.0
+  rl_trainer/avg_grpo_loss: 0.1717154085636139
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 7.31570068359375
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 7.31570068359375
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0006197440028190613
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0006197440028190613
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0009127039909362793
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0009127039909362793
+  rl_trainer_perf/push_weights/total_duration_avg_s: 7.317295467589051
+  rl_trainer_perf/push_weights/total_duration_max_s: 7.317295467589051
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.8694813232421875
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.8694813232421875
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.013600735664367676
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.013600735664367676
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0009777920246124268
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0009777920246124268
+  rl_trainer_perf/step/total_duration_avg_s: 0.8841016429327428
+  rl_trainer_perf/step/total_duration_max_s: 0.8841016429327428
+==============================
+
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:35 INFO[0m [GC] Performing periodic GC collection took 0.14 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:36 INFO[0m Pushing weights for policy version 8
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:40 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:43 INFO[0m Completed weights push in 6.96 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:18:46 INFO[0m [PolicyWorker::update] start updating weights to version 8
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:18:46 INFO[0m Loading policy_ver_0000000008.dcp_whole_state_dict from DCP with handle policy_ver_0000000008.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:46 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] INFO 10-07 13:18:52 [block_pool.py:321] Successfully reset prefix cache
+[0] [34m[Policy-0/1] 2025-10-07 13:18:52 INFO[0m Weight update completed (now v8)
+Dropping weights @ version 7
+Dropped weights @ version 7, took 0.39 seconds
+WandbBackend: Logged 98 metrics at step 8
+=== [global_logger_TYfz_r0] - METRICS STEP 8 ===
+  buffer/add/count_episodes_added: 8.0
+  buffer/evict/avg_policy_staleness: 1.0
+  buffer/evict/max_policy_staleness: 1.0
+  buffer/sample/avg_buffer_utilization: 8.0
+  buffer/sample/avg_buffer_utilization_pct: 100.0
+  buffer/sample/count_sample_requests: 1.0
+  buffer_perf/sample/total_duration_avg_s: 0.00069206184707582
+  buffer_perf/sample/total_duration_max_s: 0.00069206184707582
+  dataset/sample/avg_sample_len: 1895.0
+  dataset/sample/count_samples_generated: 2.0
+  main/continuous_rollouts/count_rollout_iterations: 2.0
+  main_perf/continuous_rollouts/compute_logprobs/duration_avg_s: 4.4230022467672825e-05
+  main_perf/continuous_rollouts/compute_logprobs/duration_max_s: 6.176810711622238e-05
+  main_perf/continuous_rollouts/data_loading/duration_avg_s: 0.0026793499710038304
+  main_perf/continuous_rollouts/data_loading/duration_max_s: 0.002688088919967413
+  main_perf/continuous_rollouts/policy_generation/duration_avg_s: 8.345366081106476
+  main_perf/continuous_rollouts/policy_generation/duration_max_s: 10.335249240044504
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_avg_s: 0.1389948580181226
+  main_perf/continuous_rollouts/reference_model_calculate_logprobs/duration_max_s: 0.13994582905434072
+  main_perf/continuous_rollouts/reward_evaluation/duration_avg_s: 0.009580527897924185
+  main_perf/continuous_rollouts/reward_evaluation/duration_max_s: 0.012915953993797302
+  main_perf/continuous_rollouts/total_duration_avg_s: 8.530797183513641
+  main_perf/continuous_rollouts/total_duration_max_s: 10.517804509028792
+  main_perf/continuous_training/drop_weights/duration_avg_s: 0.3890744079835713
+  main_perf/continuous_training/drop_weights/duration_max_s: 0.3890744079835713
+  main_perf/continuous_training/push_weights/duration_avg_s: 6.963880328927189
+  main_perf/continuous_training/push_weights/duration_max_s: 6.963880328927189
+  main_perf/continuous_training/total_duration_avg_s: 17.495051824022084
+  main_perf/continuous_training/total_duration_max_s: 17.495051824022084
+  main_perf/continuous_training/train_step/duration_avg_s: 0.8872671541757882
+  main_perf/continuous_training/train_step/duration_max_s: 0.8872671541757882
+  main_perf/continuous_training/update_weights/duration_avg_s: 9.25032081711106
+  main_perf/continuous_training/update_weights/duration_max_s: 9.25032081711106
+  main_perf/continuous_training/waiting_for_buffer/duration_avg_s: 0.004505570977926254
+  main_perf/continuous_training/waiting_for_buffer/duration_max_s: 0.004505570977926254
+  policy/generate/avg_tokens_generated: 1134.625
+  policy/generate/count_requests: 2.0
+  policy/generate/count_sequences_completed: 8.0
+  policy/generate/sum_tokens_generated: 9077.0
+  policy/update_weights/count_weight_updates: 1.0
+  policy_perf/generate/generate/duration_avg_s: 8.336090087890625
+  policy_perf/generate/generate/duration_max_s: 10.3257841796875
+  policy_perf/generate/process_inputs/duration_avg_s: 0.0028943519592285155
+  policy_perf/generate/process_inputs/duration_max_s: 0.003477952003479004
+  policy_perf/generate/prompt_truncation/duration_avg_s: 3.0879999976605178e-06
+  policy_perf/generate/prompt_truncation/duration_max_s: 3.103999886661768e-06
+  policy_perf/generate/total_duration_avg_s: 8.338992199849804
+  policy_perf/generate/total_duration_max_s: 10.329268275691197
+  policy_perf/update_weights/avg_pending_requests: 1.0
+  policy_perf/update_weights/max_pending_requests: 1.0
+  policy_worker_perf/update/total_duration_avg_s: 5.7581865234375
+  policy_worker_perf/update/total_duration_max_s: 5.7581865234375
+  reference_perf/forward/avg_sequence_length: 3072.0
+  reference_perf/forward/compute_logprobs/duration_avg_s: 0.0054873118400573725
+  reference_perf/forward/compute_logprobs/duration_max_s: 0.0055227518081665036
+  reference_perf/forward/count_forward_passes: 2.0
+  reference_perf/forward/forward/duration_avg_s: 0.10055652999877929
+  reference_perf/forward/forward/duration_max_s: 0.10067324829101562
+  reference_perf/forward/garbage_collection/duration_avg_s: 0.0006616320013999939
+  reference_perf/forward/garbage_collection/duration_max_s: 0.0007260479927062988
+  reference_perf/forward/memory_delta_end_start_avg_gb: 3.477630615234375
+  reference_perf/forward/memory_peak_max_gb: 10.772808074951172
+  reference_perf/forward/to_device/duration_avg_s: 0.0005038240104913712
+  reference_perf/forward/to_device/duration_max_s: 0.0005835840106010438
+  reference_perf/forward/total_duration_avg_s: 0.10721243385062554
+  reference_perf/forward/total_duration_max_s: 0.10727529951790347
+  reward/evaluate_response/avg_GroundTruthTestReward_reward: -10.0
+  reward/evaluate_response/avg_ThinkingReward_reward: 1.0
+  reward/evaluate_response/avg_total_reward: -4.5
+  reward/evaluate_response/count_GroundTruthTestReward_calls: 8.0
+  reward/evaluate_response/count_ThinkingReward_calls: 8.0
+  reward/evaluate_response/std_GroundTruthTestReward_reward: 0.0
+  reward/evaluate_response/std_ThinkingReward_reward: 0.0
+  reward/evaluate_response/sum_GroundTruthTestReward_reward: -80.0
+  reward/evaluate_response/sum_ThinkingReward_reward: 8.0
+  rl_trainer/avg_grpo_loss: 0.0960024893283844
+  rl_trainer/count_training_steps: 1.0
+  rl_trainer/learning_rate: 0.001
+  rl_trainer_perf/push_weights/dcp_save/duration_avg_s: 6.95993310546875
+  rl_trainer_perf/push_weights/dcp_save/duration_max_s: 6.95993310546875
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_avg_s: 0.0006124799847602845
+  rl_trainer_perf/push_weights/flatten_state_dict/duration_max_s: 0.0006124799847602845
+  rl_trainer_perf/push_weights/memory_delta_end_start_avg_gb: 0.0
+  rl_trainer_perf/push_weights/memory_peak_max_gb: 11.417983531951904
+  rl_trainer_perf/push_weights/to_hf/duration_avg_s: 0.0008609920144081116
+  rl_trainer_perf/push_weights/to_hf/duration_max_s: 0.0008609920144081116
+  rl_trainer_perf/push_weights/total_duration_avg_s: 6.961466737467796
+  rl_trainer_perf/push_weights/total_duration_max_s: 6.961466737467796
+  rl_trainer_perf/step/forward_backward/duration_avg_s: 0.8593502197265624
+  rl_trainer_perf/step/forward_backward/duration_max_s: 0.8593502197265624
+  rl_trainer_perf/step/memory_delta_end_start_avg_gb: 0.0003514289855957031
+  rl_trainer_perf/step/memory_peak_max_gb: 53.35882568359375
+  rl_trainer_perf/step/optimizer_step/duration_avg_s: 0.013880096435546874
+  rl_trainer_perf/step/optimizer_step/duration_max_s: 0.013880096435546874
+  rl_trainer_perf/step/save_checkpoint/duration_avg_s: 0.0007839679718017578
+  rl_trainer_perf/step/save_checkpoint/duration_max_s: 0.0007839679718017578
+  rl_trainer_perf/step/total_duration_avg_s: 0.87408881213516
+  rl_trainer_perf/step/total_duration_max_s: 0.87408881213516
+==============================
+
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:52 INFO[0m [GC] Performing periodic GC collection took 0.21 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:18:53 INFO[0m Pushing weights for policy version 9
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:18:57 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] [34m[RLTrainer-0/1] 2025-10-07 13:19:00 INFO[0m Completed weights push in 7.31 seconds
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:19:02 INFO[0m [PolicyWorker::update] start updating weights to version 9
+[0] [34m[PolicyWorker-0/1] 2025-10-07 13:19:02 INFO[0m Loading policy_ver_0000000009.dcp_whole_state_dict from DCP with handle policy_ver_0000000009.dcp_whole_state_dict
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] Error in testing framework: 'ActorEndpoint' object is not callable
+[0] [34m[ReferenceModel-0/1] 2025-10-07 13:19:02 INFO[0m [GC] Performing periodic GC collection took 0.00 seconds
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])
+[0] Warning: RoPE cache shape mismatch. Expected: (3072, 256), Got: torch.Size([2048, 256])

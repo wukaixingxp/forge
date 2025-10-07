@@ -1,0 +1,355 @@
+============================= test session starts ==============================
+platform linux -- Python 3.10.18, pytest-8.4.2, pluggy-1.6.0 -- /home/kaiwu/.conda/envs/forge/bin/python
+cachedir: .pytest_cache
+rootdir: /home/kaiwu/work/kaiwu/forge
+configfile: pyproject.toml
+plugins: typeguard-4.4.4, anyio-4.11.0, timeout-2.4.0, asyncio-1.2.0
+asyncio: mode=strict, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/unit_tests/test_coder.py::test_coder_success PASSED                [ 14%]
+tests/unit_tests/test_coder.py::test_coder_execution_failure PASSED      [ 28%]
+tests/unit_tests/test_coder.py::test_coder_pull_failure FAILED           [ 42%]
+tests/unit_tests/test_coder.py::test_coder_create_failure FAILED         [ 57%]
+tests/unit_tests/test_coder.py::test_coder_start_failure FAILED          [ 71%]
+tests/unit_tests/test_coder.py::test_coder_recreate PASSED               [ 85%]
+tests/unit_tests/test_coder.py::test_coder_execute_without_setup FAILED  [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_coder_pull_failure ____________________________
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.asyncio
+    async def test_coder_pull_failure():
+        """Test image pull failure."""
+        async with create_mock_coder(pull_fails=True) as (coder, _):
+            with pytest.raises(RuntimeError, match="Failed to pull image"):
+>               await coder.setup.call_one()
+
+_          = <MagicMock name='run' id='139972975261632'>
+coder      = ActorMesh(class=<class 'forge.actors.coder.SandboxedPythonCoder'>, shape={}), inner=<class 'monarch._rust_bindings.monarch_hyperactor.actor_mesh.PythonActorMesh'>)
+
+tests/unit_tests/test_coder.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.conda/envs/forge/lib/python3.10/asyncio/tasks.py:304: in __wakeup
+    future.result()
+        future     = <Future finished exception=ActorError(RuntimeError('Failed to pull image with podman: Failed to pull image: network error'))>
+        self       = None
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/future.py:138: in mark_complete
+    func, value = fut.set_result, await coro
+        coro       = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4fc3a82130>
+        func       = <built-in method set_exception of _asyncio.Future object at 0x7f4dff791900>
+        fut        = <Future finished exception=ActorError(RuntimeError('Failed to pull image with podman: Failed to pull image: network error'))>
+        loop       = <_UnixSelectorEventLoop running=False closed=False debug=False>
+        value      = ActorError(RuntimeError('Failed to pull image with podman: Failed to pull image: network error'))
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:662: in _recv
+    return self._process(result)
+        awaitable  = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dff731710>
+        i          = 1
+        result     = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925bd0>
+        self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dff77f370>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dff77f370>
+msg = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925bd0>
+
+    def _process(self, msg: PythonMessage) -> R:
+        # TODO: Try to do something more structured than a cast here
+        payload = cast(R, unflatten(msg.message, itertools.repeat(self._mailbox)))
+        match msg.kind:
+            case PythonMessageKind.Result():
+                return payload
+            case PythonMessageKind.Exception():
+>               raise cast(Exception, payload)
+E               monarch._src.actor.actor_mesh.ActorError: A remote actor call has failed.
+E                Traceback of where the remote call failed (most recent call last):
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 809, in handle
+E                   result = await instrumented()
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 806, in instrumented
+E                   raise e
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+E                   result = await the_method(*args, **kwargs)
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 58, in setup
+E                   await self._maybe_create_image()
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 86, in _maybe_create_image
+E                   raise RuntimeError(f"Failed to pull image with podman: {pull_result.stderr}")
+E               RuntimeError: Failed to pull image with podman: Failed to pull image: network error
+
+msg        = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925bd0>
+payload    = ActorError(RuntimeError('Failed to pull image with podman: Failed to pull image: network error'))
+self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dff77f370>
+
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:671: ActorError
+----------------------------- Captured stderr call -----------------------------
+[-]E1007 11:34:13.610236 1502129 monarch_hyperactor/src/telemetry.rs:58] file:actor_mesh.py, lineno:802, stacktrace:Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 58, in setup
+    await self._maybe_create_image()
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 86, in _maybe_create_image
+    raise RuntimeError(f"Failed to pull image with podman: {pull_result.stderr}")
+, actor_id:_12HYDQh9cJhN[0].coder_39182f56-a3ac-11f0-bb81-75e7a4e343be[0], Unhandled exception in actor endpoint
+------------------------------ Captured log call -------------------------------
+CRITICAL root:actor_mesh.py:802 Unhandled exception in actor endpoint
+Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 58, in setup
+    await self._maybe_create_image()
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 86, in _maybe_create_image
+    raise RuntimeError(f"Failed to pull image with podman: {pull_result.stderr}")
+RuntimeError: Failed to pull image with podman: Failed to pull image: network error
+WARNING  forge.controller.provisioner:provisioner.py:279 proc mesh <monarch._rust_bindings.monarch_hyperactor.pytokio.Shared object at 0x7f4dff752c10> was requested to be stopped, but was either already stopped or was never registered with the provisioner.
+__________________________ test_coder_create_failure ___________________________
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.asyncio
+    async def test_coder_create_failure():
+        """Test container creation failure."""
+        async with create_mock_coder(create_fails=True) as (coder, _):
+            with pytest.raises(RuntimeError, match="Failed to recreate container"):
+>               await coder.setup.call_one()
+
+_          = <MagicMock name='run' id='139972975072096'>
+coder      = ActorMesh(class=<class 'forge.actors.coder.SandboxedPythonCoder'>, shape={}), inner=<class 'monarch._rust_bindings.monarch_hyperactor.actor_mesh.PythonActorMesh'>)
+
+tests/unit_tests/test_coder.py:165: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.conda/envs/forge/lib/python3.10/asyncio/tasks.py:304: in __wakeup
+    future.result()
+        future     = <Future finished exception=ActorError(RuntimeError('Failed to recreate container: Failed to create container: no space'))>
+        self       = None
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/future.py:138: in mark_complete
+    func, value = fut.set_result, await coro
+        coro       = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dff7cdd10>
+        func       = <built-in method set_exception of _asyncio.Future object at 0x7f4fc4765fe0>
+        fut        = <Future finished exception=ActorError(RuntimeError('Failed to recreate container: Failed to create container: no space'))>
+        loop       = <_UnixSelectorEventLoop running=False closed=False debug=False>
+        value      = ActorError(RuntimeError('Failed to recreate container: Failed to create container: no space'))
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:662: in _recv
+    return self._process(result)
+        awaitable  = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dff7cdb90>
+        i          = 1
+        result     = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925570>
+        self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dff77cbe0>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dff77cbe0>
+msg = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925570>
+
+    def _process(self, msg: PythonMessage) -> R:
+        # TODO: Try to do something more structured than a cast here
+        payload = cast(R, unflatten(msg.message, itertools.repeat(self._mailbox)))
+        match msg.kind:
+            case PythonMessageKind.Result():
+                return payload
+            case PythonMessageKind.Exception():
+>               raise cast(Exception, payload)
+E               monarch._src.actor.actor_mesh.ActorError: A remote actor call has failed.
+E                Traceback of where the remote call failed (most recent call last):
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 809, in handle
+E                   result = await instrumented()
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 806, in instrumented
+E                   raise e
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+E                   result = await the_method(*args, **kwargs)
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 59, in setup
+E                   self._recreate()
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 117, in _recreate
+E                   raise RuntimeError(f"Failed to recreate container: {result.stderr}")
+E               RuntimeError: Failed to recreate container: Failed to create container: no space
+
+msg        = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925570>
+payload    = ActorError(RuntimeError('Failed to recreate container: Failed to create container: no space'))
+self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dff77cbe0>
+
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:671: ActorError
+----------------------------- Captured stderr call -----------------------------
+[-]E1007 11:34:13.652727 1502129 monarch_hyperactor/src/telemetry.rs:58] file:actor_mesh.py, lineno:802, stacktrace:Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 59, in setup
+    self._recreate()
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 117, in _recreate
+    raise RuntimeError(f"Failed to recreate container: {result.stderr}")
+, actor_id:_12HYDQh9cJhN[0].coder_391e891e-a3ac-11f0-bb81-75e7a4e343be[0], Unhandled exception in actor endpoint
+------------------------------ Captured log call -------------------------------
+CRITICAL root:actor_mesh.py:802 Unhandled exception in actor endpoint
+Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 59, in setup
+    self._recreate()
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 117, in _recreate
+    raise RuntimeError(f"Failed to recreate container: {result.stderr}")
+RuntimeError: Failed to recreate container: Failed to create container: no space
+WARNING  forge.controller.provisioner:provisioner.py:279 proc mesh <monarch._rust_bindings.monarch_hyperactor.pytokio.Shared object at 0x7f4dff752c10> was requested to be stopped, but was either already stopped or was never registered with the provisioner.
+___________________________ test_coder_start_failure ___________________________
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.asyncio
+    async def test_coder_start_failure():
+        """Test container start failure."""
+        async with create_mock_coder(start_fails=True) as (coder, _):
+            with pytest.raises(RuntimeError, match="Failed to start container"):
+>               await coder.setup.call_one()
+
+_          = <MagicMock name='run' id='139972954180000'>
+coder      = ActorMesh(class=<class 'forge.actors.coder.SandboxedPythonCoder'>, shape={}), inner=<class 'monarch._rust_bindings.monarch_hyperactor.actor_mesh.PythonActorMesh'>)
+
+tests/unit_tests/test_coder.py:174: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.conda/envs/forge/lib/python3.10/asyncio/tasks.py:304: in __wakeup
+    future.result()
+        future     = <Future finished exception=ActorError(RuntimeError('Failed to start container: Failed to start container'))>
+        self       = None
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/future.py:138: in mark_complete
+    func, value = fut.set_result, await coro
+        coro       = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dff7cdc50>
+        func       = <built-in method set_exception of _asyncio.Future object at 0x7f4dff791850>
+        fut        = <Future finished exception=ActorError(RuntimeError('Failed to start container: Failed to start container'))>
+        loop       = <_UnixSelectorEventLoop running=False closed=False debug=False>
+        value      = ActorError(RuntimeError('Failed to start container: Failed to start container'))
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:662: in _recv
+    return self._process(result)
+        awaitable  = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dfed1b0f0>
+        i          = 1
+        result     = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4e00bfe230>
+        self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dfe366140>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dfe366140>
+msg = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4e00bfe230>
+
+    def _process(self, msg: PythonMessage) -> R:
+        # TODO: Try to do something more structured than a cast here
+        payload = cast(R, unflatten(msg.message, itertools.repeat(self._mailbox)))
+        match msg.kind:
+            case PythonMessageKind.Result():
+                return payload
+            case PythonMessageKind.Exception():
+>               raise cast(Exception, payload)
+E               monarch._src.actor.actor_mesh.ActorError: A remote actor call has failed.
+E                Traceback of where the remote call failed (most recent call last):
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 809, in handle
+E                   result = await instrumented()
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 806, in instrumented
+E                   raise e
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+E                   result = await the_method(*args, **kwargs)
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 59, in setup
+E                   self._recreate()
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 127, in _recreate
+E                   raise RuntimeError(f"Failed to start container: {start_result.stderr}")
+E               RuntimeError: Failed to start container: Failed to start container
+
+msg        = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4e00bfe230>
+payload    = ActorError(RuntimeError('Failed to start container: Failed to start container'))
+self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dfe366140>
+
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:671: ActorError
+----------------------------- Captured stderr call -----------------------------
+[-]E1007 11:34:13.678703 1502129 monarch_hyperactor/src/telemetry.rs:58] file:actor_mesh.py, lineno:802, stacktrace:Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 59, in setup
+    self._recreate()
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 127, in _recreate
+    raise RuntimeError(f"Failed to start container: {start_result.stderr}")
+, actor_id:_12HYDQh9cJhN[0].coder_39228d5c-a3ac-11f0-bb81-75e7a4e343be[0], Unhandled exception in actor endpoint
+------------------------------ Captured log call -------------------------------
+CRITICAL root:actor_mesh.py:802 Unhandled exception in actor endpoint
+Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 59, in setup
+    self._recreate()
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 127, in _recreate
+    raise RuntimeError(f"Failed to start container: {start_result.stderr}")
+RuntimeError: Failed to start container: Failed to start container
+WARNING  forge.controller.provisioner:provisioner.py:279 proc mesh <monarch._rust_bindings.monarch_hyperactor.pytokio.Shared object at 0x7f4dff752c10> was requested to be stopped, but was either already stopped or was never registered with the provisioner.
+_______________________ test_coder_execute_without_setup _______________________
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.asyncio
+    async def test_coder_execute_without_setup():
+        """Test execution without setup raises error."""
+        async with create_mock_coder() as (coder, _):
+            # Try to execute without setup
+            with pytest.raises(RuntimeError, match="Container not initialized"):
+>               await coder.execute.call_one(code="print('Hello')")
+
+_          = <MagicMock name='run' id='139972964530784'>
+coder      = ActorMesh(class=<class 'forge.actors.coder.SandboxedPythonCoder'>, shape={}), inner=<class 'monarch._rust_bindings.monarch_hyperactor.actor_mesh.PythonActorMesh'>)
+
+tests/unit_tests/test_coder.py:204: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.conda/envs/forge/lib/python3.10/asyncio/tasks.py:304: in __wakeup
+    future.result()
+        future     = <Future finished exception=ActorError(RuntimeError('Container not initialized. Call recreate() first.'))>
+        self       = None
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/future.py:138: in mark_complete
+    func, value = fut.set_result, await coro
+        coro       = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dfed1ba50>
+        func       = <built-in method set_exception of _asyncio.Future object at 0x7f4fc3263320>
+        fut        = <Future finished exception=ActorError(RuntimeError('Container not initialized. Call recreate() first.'))>
+        loop       = <_UnixSelectorEventLoop running=False closed=False debug=False>
+        value      = ActorError(RuntimeError('Container not initialized. Call recreate() first.'))
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:662: in _recv
+    return self._process(result)
+        awaitable  = <monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask object at 0x7f4dfed1aa90>
+        i          = 1
+        result     = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925570>
+        self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dfed436a0>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dfed436a0>
+msg = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925570>
+
+    def _process(self, msg: PythonMessage) -> R:
+        # TODO: Try to do something more structured than a cast here
+        payload = cast(R, unflatten(msg.message, itertools.repeat(self._mailbox)))
+        match msg.kind:
+            case PythonMessageKind.Result():
+                return payload
+            case PythonMessageKind.Exception():
+>               raise cast(Exception, payload)
+E               monarch._src.actor.actor_mesh.ActorError: A remote actor call has failed.
+E                Traceback of where the remote call failed (most recent call last):
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 809, in handle
+E                   result = await instrumented()
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 806, in instrumented
+E                   raise e
+E                 File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+E                   result = await the_method(*args, **kwargs)
+E                 File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 145, in execute
+E                   raise RuntimeError("Container not initialized. Call recreate() first.")
+E               RuntimeError: Container not initialized. Call recreate() first.
+
+msg        = <monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage object at 0x7f4fc3925570>
+payload    = ActorError(RuntimeError('Container not initialized. Call recreate() first.'))
+self       = <monarch._src.actor.actor_mesh.PortReceiver object at 0x7f4dfed436a0>
+
+../../../.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py:671: ActorError
+----------------------------- Captured stderr call -----------------------------
+[-]E1007 11:34:13.764145 1502129 monarch_hyperactor/src/telemetry.rs:58] file:actor_mesh.py, lineno:802, stacktrace:Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 145, in execute
+    raise RuntimeError("Container not initialized. Call recreate() first.")
+, actor_id:_12HYDQh9cJhN[0].coder_392fa32a-a3ac-11f0-bb81-75e7a4e343be[0], Unhandled exception in actor endpoint
+------------------------------ Captured log call -------------------------------
+CRITICAL root:actor_mesh.py:802 Unhandled exception in actor endpoint
+Traceback (most recent call last):
+  File "/home/kaiwu/.conda/envs/forge/lib/python3.10/site-packages/monarch/_src/actor/actor_mesh.py", line 799, in instrumented
+    result = await the_method(*args, **kwargs)
+  File "/home/kaiwu/work/kaiwu/forge/src/forge/actors/coder.py", line 145, in execute
+    raise RuntimeError("Container not initialized. Call recreate() first.")
+RuntimeError: Container not initialized. Call recreate() first.
+WARNING  forge.controller.provisioner:provisioner.py:279 proc mesh <monarch._rust_bindings.monarch_hyperactor.pytokio.Shared object at 0x7f4dff752c10> was requested to be stopped, but was either already stopped or was never registered with the provisioner.
+=========================== short test summary info ============================
+FAILED tests/unit_tests/test_coder.py::test_coder_pull_failure - monarch._src...
+FAILED tests/unit_tests/test_coder.py::test_coder_create_failure - monarch._s...
+FAILED tests/unit_tests/test_coder.py::test_coder_start_failure - monarch._sr...
+FAILED tests/unit_tests/test_coder.py::test_coder_execute_without_setup - mon...
+========================= 4 failed, 3 passed in 1.55s ==========================
