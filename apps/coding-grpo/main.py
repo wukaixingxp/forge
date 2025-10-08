@@ -28,7 +28,7 @@ from forge.actors.trainer import RLTrainer
 from forge.cli.config import parse
 from forge.controller.actor import ForgeActor
 from forge.controller.provisioner import init_provisioner, shutdown
-from forge.data.rewards import ThinkingReward, GroundTruthTestReward
+from forge.data.rewards import GroundTruthTestReward, ThinkingReward
 from forge.observability.metric_actors import get_or_create_metric_logger
 from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
@@ -297,42 +297,110 @@ def function_name(parameters):
     pass
 ```"""
 
-        def acecode_transform(sample):
-            # Filter to OSS subset only
-            if (
-                sample.get("source") != "oss"
-                or not sample.get("test_cases")
-                or not isinstance(sample.get("test_cases"), list)
-                or len(sample.get("test_cases", [])) == 0
-            ):
-                return None
+        def transform_sample(sample):
+            # Handle different dataset formats
+            if self.path == "openai/gsm8k":
+                # GSM8K format: {"question": "...", "answer": "..."}
+                if not sample.get("question") or not sample.get("answer"):
+                    return None
 
-            system_prompt = get_coding_system_prompt()
-            request: str = sample.get("question", sample.get("prompt", ""))
-            as_chat = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request},
-            ]
-            formatted_request = self._tokenizer.apply_chat_template(
-                as_chat,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            test_cases = sample.get("test_cases", [])
-            return {
-                "request": formatted_request,
-                "target": test_cases,  # Use test cases as target for reward function
-                "task_id": sample.get("id", ""),
-                "source": sample.get("source"),
-                "difficulty": sample.get("difficulty", "unknown"),
-            }
+                system_prompt = get_coding_system_prompt()
+                request: str = sample["question"]
+                as_chat = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": request},
+                ]
+                formatted_request = self._tokenizer.apply_chat_template(
+                    as_chat,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                return {
+                    "request": formatted_request,
+                    "target": sample["answer"],  # Use answer as target
+                    "task_id": str(hash(sample["question"])),  # Generate task ID
+                    "source": "gsm8k",
+                    "difficulty": "unknown",
+                }
+
+            elif self.path == "TIGER-Lab/AceCode-87K":
+                # AceCode format with OSS filtering
+                if (
+                    sample.get("source") != "oss"
+                    or not sample.get("test_cases")
+                    or not isinstance(sample.get("test_cases"), list)
+                    or len(sample.get("test_cases", [])) == 0
+                ):
+                    return None
+
+                system_prompt = get_coding_system_prompt()
+                request: str = sample.get("question", sample.get("prompt", ""))
+                as_chat = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": request},
+                ]
+                formatted_request = self._tokenizer.apply_chat_template(
+                    as_chat,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                test_cases = sample.get("test_cases", [])
+                return {
+                    "request": formatted_request,
+                    "target": test_cases,  # Use test cases as target for reward function
+                    "task_id": sample.get("id", ""),
+                    "source": sample.get("source"),
+                    "difficulty": sample.get("difficulty", "unknown"),
+                }
+            else:
+                # Generic format - try to handle most common structures
+                question_key = None
+                answer_key = None
+
+                # Try common question field names
+                for key in ["question", "prompt", "input", "problem"]:
+                    if sample.get(key):
+                        question_key = key
+                        break
+
+                # Try common answer field names
+                for key in ["answer", "target", "solution", "output"]:
+                    if sample.get(key):
+                        answer_key = key
+                        break
+
+                if not question_key or not answer_key:
+                    return None
+
+                system_prompt = get_coding_system_prompt()
+                request: str = sample[question_key]
+                as_chat = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": request},
+                ]
+                formatted_request = self._tokenizer.apply_chat_template(
+                    as_chat,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                return {
+                    "request": formatted_request,
+                    "target": sample[answer_key],
+                    "task_id": str(hash(sample[question_key])),  # Generate task ID
+                    "source": "unknown",
+                    "difficulty": "unknown",
+                }
 
         ds = load_dataset(
-            self.path, split=self.data_split, streaming=self.streaming, revision=self.revision
+            self.path,
+            "main",
+            split=self.data_split,
+            streaming=self.streaming,
+            revision=self.revision,
         )
         # Filter and transform to coding format
-        ds = ds.filter(lambda x: acecode_transform(x) is not None)
-        ds = ds.map(acecode_transform)
+        ds = ds.filter(lambda x: transform_sample(x) is not None)
+        ds = ds.map(transform_sample)
         ds = ds.shuffle()
         self._iterator = iter(ds)
 
