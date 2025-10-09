@@ -20,7 +20,7 @@ metric_logging:
 
 # Dataset configuration
 dataset:
-  path: "openai/gsm8k"
+  path: "TIGER-Lab/AceCode-87K"
   revision: "main"
   data_split: "train"
   streaming: true

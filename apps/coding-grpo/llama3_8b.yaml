@@ -1,20 +1,13 @@
 # Grouped Relative Policy Optimization (GRPO)
-# >>> python -m apps.grpo.main --config apps/grpo/qwen32b.yaml
-# NOTE - This has not been tested for correctness yet! All testing so far has been only for infrastructure stability
+# >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b.yaml
 
 # Global configuration
-group_size: 2
-batch_size: 8
-max_req_tokens: 512
-max_res_tokens: 512
-model: "Qwen/Qwen3-32B"
+group_size: 4  # Reduced for coding tasks due to longer sequences
+batch_size: 8   # Reduced due to longer sequences and memory constraints
+max_req_tokens: 1024  # Increased for coding prompts with examples
+max_res_tokens: 2048  # Increased for longer code generation with thinking
+model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1 # Off by one by default
-
-provisioner:
-  launcher: slurm
-
-# Main loop configuration
-rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 
 # Observability configuration
 metric_logging:
@@ -35,9 +28,10 @@ dataset:
 
 # Policy configuration
 policy:
+  use_vllm_builtin_load: true
   engine_config:
     model: ${model}
-    tensor_parallel_size: 4
+    tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: false
   sampling_config:
@@ -48,9 +42,11 @@ policy:
 
 # Trainer configuration
 trainer:
+  use_dcp: true
+  use_vllm_builtin_load: true
   model:
-    name: qwen3
-    flavor: 32B
+    name: llama3
+    flavor: 8B
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
@@ -80,23 +76,26 @@ trainer:
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 500
+    interval: 200
     async_mode: "disabled"
   activation_checkpoint:
-    mode: full
+    mode: selective
+    selective_ac_option: op
 
 # Replay buffer configuration
 replay_buffer:
   batch_size: ${batch_size}
   max_policy_age: ${off_by_n}
-  # dp_size: ${trainer.parallelism.data_parallel_shard_degree} # Must equal trainer DP degree
-  dp_size: 8
+  # This should match the dp_size of TorchTitan
+  # Here it's set explicitly to 2, because we've set
+  # 2 GPUs for the trainer and we're using full FSDP.
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
 
 # Reference model configuration
 ref_model:
   model:
-    name: qwen3
-    flavor: 32B
+    name: llama3
+    flavor: 8B
     hf_assets_path: hf://${model}
   training:
     dtype: bfloat16
@@ -106,12 +105,11 @@ ref_model:
   parallelism:
     data_parallel_replicate_degree: 1
     data_parallel_shard_degree: 1
-    tensor_parallel_degree: 4
+    tensor_parallel_degree: 1
     pipeline_parallel_degree: 1
     context_parallel_degree: 1
     expert_parallel_degree: 1
   checkpoint:
-    enable: true
     initial_load_path: hf://${model}
     initial_load_in_hf: true
 
@@ -120,10 +118,9 @@ services:
   policy:
     procs: ${policy.engine_config.tensor_parallel_size}
     num_replicas: 1
-    hosts: 1
     with_gpus: true
   ref_model:
-    procs: ${ref_model.parallelism.tensor_parallel_degree}
+    procs: 1
     num_replicas: 1
     with_gpus: true
   reward_actor:
@@ -136,8 +133,7 @@ actors:
     procs: 1
     with_gpus: false
   trainer:
-    procs: 8
-    hosts: 1
+    procs: 2
     with_gpus: true
   replay_buffer:
     procs: 1
