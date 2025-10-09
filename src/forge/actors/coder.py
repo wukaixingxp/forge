@@ -5,50 +5,55 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 
-from monarch.actor import endpoint
-
 from forge.controller import ForgeActor
+
+from monarch.actor import endpoint
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
 class SandboxedPythonCoder(ForgeActor):
-    """A sandboxed code execution environment using podman containers.
+    """A sandboxed code execution environment using enroot containers.
 
-    This actor provides a sandboxed environment for executing Python code
-    using podman container technology.
+    This is a proof of concept of using enroot to provided a sandboxed
+    environment for executing Python code using NVIDIA's enroot technology.
 
     It automatically manages the entire container lifecycle including image
-    pulling, container creation, and cleanup.
+    import, container creation, and cleanup.
 
     The actor follows a three-stage workflow:
-    1. Image Management: Uses podman to pull images from registries
+    1. Image Management: Automatically imports Docker images to enroot .sqsh format
     2. Container Lifecycle: Creates fresh container instances for isolated execution
     3. Code Execution: Safely runs Python code with proper error handling and output capture
 
     Dependencies:
-    - podman: Container engine for pulling images and running containers (must be installed on host)
-    - Container images: Accessible via standard container registries
+    - enroot: NVIDIA's container runtime (must be installed on host)
+    - Docker images: Accessible via docker:// URLs or local paths
 
     Args:
-        container_image: Container image name to pull (e.g., "python:3.10").
+        docker_image: Docker image URL to import (e.g., "docker://python:3.10").
                         Can be any Docker Hub image or custom registry URL.
-        container_name: Unique name for the podman container instance. Used for
+        sqsh_image_path: Local filesystem path where the enroot .sqsh image will be stored.
+                        If the file doesn't exist, it will be created via enroot import.
+        container_name: Unique name for the enroot container instance. Used for
                         container lifecycle management (create/remove operations).
 
     """
 
     def __init__(
         self,
-        container_image: str = "python:3.10",
+        docker_image: str = "docker://python:3.10",
+        sqsh_image_path: str = "python-image.sqsh",
         container_name: str = "sandbox",
     ):
-        self.container_image = container_image
+        self.docker_image = docker_image
+        self.sqsh_image_path = sqsh_image_path
         self.container_name = container_name
         self._initialized = False
 
@@ -64,50 +69,37 @@ class SandboxedPythonCoder(ForgeActor):
         self._recreate()
 
     async def _maybe_create_image(self):
-        """Ensure the container image is pulled and available locally."""
-        logging.debug(f"Checking if image {self.container_image} is available")
-        
-        # Check if image already exists locally
-        inspect_result = subprocess.run(
-            ["podman", "image", "exists", self.container_image],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        
-        if inspect_result.returncode != 0:
-            logging.debug(f"Image {self.container_image} not found locally, pulling")
-            pull_result = subprocess.run(
-                ["podman", "pull", self.container_image],
+        """Ensure the enroot image exists, import it if necessary."""
+        if not os.path.exists(self.sqsh_image_path):
+            logging.debug(
+                f"Image {self.sqsh_image_path} not found, importing from {self.docker_image}"
+            )
+            result = subprocess.run(
+                ["enroot", "import", "-o", self.sqsh_image_path, self.docker_image],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            if pull_result.returncode != 0:
-                raise RuntimeError(f"Failed to pull image with podman: {pull_result.stderr}")
-            logging.debug(f"Successfully pulled {self.container_image}")
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to import image: {result.stderr}")
+            logging.debug(
+                f"Successfully imported {self.docker_image} to {self.sqsh_image_path}"
+            )
         else:
-            logging.info(f"Using existing image: {self.container_image}")
+            logging.info(f"Using existing image: {self.sqsh_image_path}")
 
     def _recreate(self):
         """(Re)create a clean container instance from the base image."""
         # Remove any old container
         logging.debug(f"Removing container {self.container_name}")
         subprocess.run(
-            ["podman", "rm", "-f", self.container_name],
+            ["enroot", "remove", "-f", self.container_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        
         # Create new container from image
-        # We create the container in a stopped state, ready to be started
         result = subprocess.run(
-            [
-                "podman", "create",
-                "--name", self.container_name,
-                "--rm=false",  # We'll manage removal ourselves
-                self.container_image,
-                "sleep", "infinity"  # Keep container alive for exec commands
-            ],
+            ["enroot", "create", "--name", self.container_name, self.sqsh_image_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -115,17 +107,6 @@ class SandboxedPythonCoder(ForgeActor):
         logging.debug(f"Container creation result: {result}")
         if result.returncode != 0:
             raise RuntimeError(f"Failed to recreate container: {result.stderr}")
-        
-        # Start the container
-        start_result = subprocess.run(
-            ["podman", "start", self.container_name],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if start_result.returncode != 0:
-            raise RuntimeError(f"Failed to start container: {start_result.stderr}")
-        
         self._initialized = True
         logging.debug("Successfully initialized container")
 
@@ -144,31 +125,20 @@ class SandboxedPythonCoder(ForgeActor):
         if not self._initialized:
             raise RuntimeError("Container not initialized. Call recreate() first.")
 
-        # Write code to a temporary file and copy it into the container
+        # Write code to a temporary file that we can mount
         with tempfile.TemporaryDirectory() as tmpdir:
             code_path = Path(tmpdir) / "script.py"
             code_path.write_text(code)
 
-            # Copy the script into the container
-            copy_result = subprocess.run(
-                [
-                    "podman", "cp",
-                    str(code_path),
-                    f"{self.container_name}:/tmp/script.py"
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            if copy_result.returncode != 0:
-                raise RuntimeError(f"Failed to copy script to container: {copy_result.stderr}")
-
-            # Execute the code inside the container
+            # Run the code inside the container, mounting tmpdir
             cmd = [
-                "podman", "exec",
+                "enroot",
+                "start",
+                "--mount",
+                f"{tmpdir}:/work",
                 self.container_name,
                 "python3",
-                "/tmp/script.py",
+                "/work/script.py",
             ]
             result = subprocess.run(
                 cmd,
