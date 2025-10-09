@@ -1,4 +1,4 @@
-# Grouped Relative Policy Optimization (GRPO) for Code Generation
+# Grouped Relative Policy Optimization (GRPO)
 # >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b.yaml
 
 # Global configuration
@@ -9,15 +9,11 @@ max_res_tokens: 2048  # Increased for longer code generation with thinking
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1 # Off by one by default
 
-# Main loop configuration
-rollout_threads: 1   # Recommended to set equal to policy.num_replicas
-
-
 # Observability configuration
 metric_logging:
   wandb:
-    project: "coding-grpo-training"
-    group: "coding_grpo_exp_${oc.env:USER}"
+    project: "grpo-training"
+    group: "grpo_exp_${oc.env:USER}"
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
@@ -32,13 +28,12 @@ dataset:
 
 # Policy configuration
 policy:
+  use_vllm_builtin_load: true
   engine_config:
     model: ${model}
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: false
-    dtype: "bf16"
-    max_num_seqs: 48
   sampling_config:
     n: ${group_size}
     max_tokens: ${max_res_tokens}
@@ -47,6 +42,8 @@ policy:
 
 # Trainer configuration
 trainer:
+  use_dcp: true
+  use_vllm_builtin_load: true
   model:
     name: llama3
     flavor: 8B
@@ -68,7 +65,7 @@ trainer:
     enable: false
   parallelism:
     data_parallel_replicate_degree: 1
-    data_parallel_shard_degree: 1
+    data_parallel_shard_degree: -1
     tensor_parallel_degree: 1
     pipeline_parallel_degree: 1
     context_parallel_degree: 1
@@ -79,7 +76,7 @@ trainer:
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 500
+    interval: 200
     async_mode: "disabled"
     load_step: null  # Set to null to start fresh, or specify a valid step number to resume
   activation_checkpoint:
@@ -90,7 +87,10 @@ trainer:
 replay_buffer:
   batch_size: ${batch_size}
   max_policy_age: ${off_by_n}
-  dp_size: ${trainer.parallelism.data_parallel_shard_degree} # Must equal trainer DP degree
+  # This should match the dp_size of TorchTitan
+  # Here it's set explicitly to 2, because we've set
+  # 2 GPUs for the trainer and we're using full FSDP.
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
 
 # Reference model configuration
 ref_model:
@@ -111,7 +111,6 @@ ref_model:
     context_parallel_degree: 1
     expert_parallel_degree: 1
   checkpoint:
-    enable: true
     initial_load_path: hf://${model}
     initial_load_in_hf: true
 
@@ -135,7 +134,7 @@ actors:
     procs: 1
     with_gpus: false
   trainer:
-    procs: 1
+    procs: 2
     with_gpus: true
   replay_buffer:
     procs: 1
