@@ -59,7 +59,7 @@ trainer:
     local_batch_size: ${batch_size}
     seq_len: 2048
     max_norm: 1.0
-    steps: 1000000
+    steps: 2000
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -79,6 +79,7 @@ trainer:
     last_save_in_hf: true
     interval: 500
     async_mode: "disabled"
+    load_step: null  # Set to null to start fresh, or specify a valid step number to resume
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
