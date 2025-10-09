@@ -37,7 +37,6 @@ policy:
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: false
-    dtype: "bf16"
     max_num_seqs: 48
   sampling_config:
     n: ${group_size}
