@@ -393,7 +393,6 @@ def function_name(parameters):
 
         ds = load_dataset(
             self.path,
-            "main",
             split=self.data_split,
             streaming=self.streaming,
             revision=self.revision,
