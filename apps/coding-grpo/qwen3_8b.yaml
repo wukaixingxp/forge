@@ -2,10 +2,11 @@
 # >>> python -m apps.grpo.main --config apps/grpo/qwen3_8b.yaml
 
 # Global configuration
-group_size: 8
-batch_size: 16
-max_req_tokens: 512
-max_res_tokens: 512
+# Global configuration
+group_size: 4  # Reduced for coding tasks due to longer sequences
+batch_size: 8   # Reduced due to longer sequences and memory constraints
+max_req_tokens: 1024  # Increased for coding prompts with examples
+max_res_tokens: 2048  # Increased for longer code generation with thinking steps
 model: "Qwen/Qwen3-8B"
 off_by_n: 1 # Off by one by default
 
@@ -58,7 +59,7 @@ trainer:
     local_batch_size: ${batch_size}
     seq_len: 2048
     max_norm: 1.0
-    steps: 1000000
+    steps: 2000
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -89,7 +90,7 @@ replay_buffer:
   # This should match the dp_size of TorchTitan
   # Here it's set explicitly to 2, because we've set
   # 2 GPUs for the trainer and we're using full FSDP.
-  dp_size: 2
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
 
 # Reference model configuration
 ref_model:
@@ -133,7 +134,7 @@ actors:
     procs: 1
     with_gpus: false
   trainer:
-    procs: 2
+    procs: 1
     with_gpus: true
   replay_buffer:
     procs: 1
