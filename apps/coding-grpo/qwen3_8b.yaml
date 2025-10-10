@@ -6,7 +6,7 @@
 group_size: 4  # Reduced for coding tasks due to longer sequences
 batch_size: 8   # Reduced due to longer sequences and memory constraints
 max_req_tokens: 1024  # Increased for coding prompts with examples
-max_res_tokens: 2048  # Increased for longer code generation with thinking steps
+max_res_tokens: 1024  # Increased for longer code generation with thinking steps
 model: "Qwen/Qwen3-8B"
 off_by_n: 1 # Off by one by default
 

@@ -79,7 +79,6 @@ trainer:
     last_save_in_hf: true
     interval: 500
     async_mode: "disabled"
-    load_step: null  # Set to null to start fresh, or specify a valid step number to resume
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
