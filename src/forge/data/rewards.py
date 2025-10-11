@@ -191,7 +191,7 @@ if failed_tests:
 """
 
                 # Execute code using the coder actor - this is the async call
-                output, error = await self.coder_actor.execute(test_script)
+                output, error = await self.coder_actor.execute.call_one(code=test_script)
                 results_output = output + "\n" + error
                   
                 print("=" * 80)

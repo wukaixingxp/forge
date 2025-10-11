@@ -461,8 +461,11 @@ async def main(cfg: DictConfig):
     # ---- Setup services ---- #
 
     # Setup coding environment
-    coder_actor = await SandboxedPythonCoder.options(name="coder").as_actor()
-    await coder_actor.setup.call_one()
+    coder_actor = await SandboxedPythonCoder.as_actor(
+        docker_image="docker://python:3.10",
+        sqsh_image_path="/tmp/python-coder.sqsh",
+        container_name="coder_sandbox"
+    )
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
