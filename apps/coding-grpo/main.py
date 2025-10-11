@@ -180,7 +180,7 @@ class RewardActor(ForgeActor):
     reward_functions: list[Callable]
 
     @endpoint
-    async def evaluate_response(self, prompt: str, response: str, target: str) -> float:
+    async def evaluate_response(self, prompt: str, response: str, target: Any) -> float:
         total_rewards = 0.0
         for reward_fn in self.reward_functions:
             # Check if reward_fn is async (returns a coroutine)
