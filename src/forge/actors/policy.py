@@ -16,6 +16,7 @@ from copy import copy
 from dataclasses import asdict, dataclass, field, fields
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 import torchstore as ts
 from monarch.actor import current_rank, endpoint, ProcMesh
@@ -586,6 +587,9 @@ class PolicyWorker(ForgeActor):
 
     # used for tesing purposes only
     _test_prev_params = {}
+    
+    # For broadcast-based weight updates
+    broadcast_group: dist.ProcessGroup | None = None
 
     def __post_init__(self):
         super().__init__()
@@ -650,11 +654,112 @@ class PolicyWorker(ForgeActor):
         )
 
     @endpoint
-    async def update(self, version: int):
-        """Update model weights by reading state dict from torchstore"""
+    async def init_broadcast_group(
+        self,
+        master_address: str,
+        master_port: int,
+        rank_offset: int,
+        world_size: int,
+        backend: str = "nccl",
+    ):
+        """Initialize a process group for broadcast-based weight updates.
+        
+        Args:
+            master_address: IP address of the master node
+            master_port: Port for the master node
+            rank_offset: Offset to add to local rank to get global rank
+            world_size: Total number of processes in the group
+            backend: PyTorch distributed backend (default: "nccl")
+        """
         logger.info(
-            f"[PolicyWorker::update] start updating weights to version {version}"
+            f"[PolicyWorker::init_broadcast_group] Initializing broadcast group: "
+            f"rank={self.rank + rank_offset}, world_size={world_size}"
         )
+        
+        # Initialize process group
+        os.environ["MASTER_ADDR"] = master_address
+        os.environ["MASTER_PORT"] = str(master_port)
+        
+        device = torch.device(f"cuda:{self.rank}")
+        
+        # Initialize the process group
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend=backend,
+                init_method=f"tcp://{master_address}:{master_port}",
+                rank=self.rank + rank_offset,
+                world_size=world_size,
+            )
+        
+        self.broadcast_group = dist.group.WORLD
+        logger.info(
+            f"[PolicyWorker::init_broadcast_group] Broadcast group initialized successfully"
+        )
+
+    @endpoint
+    async def update_broadcast(self, version: int, param_name: str, dtype, shape):
+        """Update a single model weight via broadcast from source rank.
+        
+        This method receives a broadcasted weight from the training actor.
+        It should be called in coordination with the training actor broadcasting weights.
+        
+        Args:
+            version: Version number of the weights
+            param_name: Name of the parameter to update
+            dtype: Data type of the parameter tensor
+            shape: Shape of the parameter tensor
+        """
+        if self.broadcast_group is None:
+            raise RuntimeError(
+                "Broadcast group not initialized. Call init_broadcast_group first."
+            )
+        
+        logger.debug(
+            f"[PolicyWorker::update_broadcast] Receiving broadcast for {param_name} "
+            f"(version={version}, dtype={dtype}, shape={shape})"
+        )
+        
+        model = self.worker.model_runner.model
+        device = torch.device(f"cuda:{self.rank}")
+        
+        # Create a tensor to receive the broadcast
+        param = torch.empty(shape, dtype=dtype, device=device)
+        
+        # Receive the broadcast from source rank (rank 0)
+        dist.broadcast(param, src=0, group=self.broadcast_group)
+        
+        # Load the weight into the model
+        loaded = model.load_weights([(param_name, param)])
+        
+        logger.debug(
+            f"[PolicyWorker::update_broadcast] Loaded weight {param_name}, "
+            f"loaded keys: {loaded}"
+        )
+        
+        del param
+
+    @endpoint
+    async def update(self, version: int, use_broadcast: bool = False):
+        """Update model weights by reading state dict from torchstore or via broadcast.
+        
+        Args:
+            version: Version number of the weights to load
+            use_broadcast: If True, use broadcast to receive weights instead of reading from disk
+        """
+        logger.info(
+            f"[PolicyWorker::update] start updating weights to version {version} "
+            f"(use_broadcast={use_broadcast})"
+        )
+        
+        if use_broadcast:
+            logger.info(
+                "[PolicyWorker::update] Using broadcast mode. "
+                "Weights will be received via broadcast operations. "
+                "Call update_broadcast() for each parameter."
+            )
+            return
+        
+        # Original disk-based update logic
         model = self.worker.model_runner.model
         prefix = get_param_prefix(version)
         logger.debug(f"{prefix=}")
