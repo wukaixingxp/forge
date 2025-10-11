@@ -190,6 +190,12 @@ if failed_tests:
             # Execute code using the coder actor
             output, error = await self.coder_actor.execute(test_script)
             results_output = output + "\n" + error
+              
+            print("=" * 80)
+            print("[DEBUG] GroundTruthTestReward - RESULTS OUTPUT:")
+            print("-" * 80)
+            print(results_output)
+            print("-" * 80)
 
             if output and "PASSED:" in output:
                 # Parse results from output
@@ -209,6 +215,8 @@ if failed_tests:
                             pass
 
                 success_rate = passed / total if total > 0 else 0.0
+                  
+                print(f"[DEBUG] Test Results: passed={passed}/{total}, success_rate={success_rate:.2%}")
 
                 # Improved reward based on success rate with better granularity
                 if success_rate == 1.0:
@@ -225,16 +233,23 @@ if failed_tests:
                     reward = -2.0  # Very poor but at least some test passed
                 else:
                     reward = -8.0  # Complete failure - no tests passed
+                  
+                print(f"[DEBUG] Final Reward: {reward}")
+                print("=" * 80)
 
                 return reward
             else:
                 # Execution failed - check if it's a syntax error or runtime error
                 if "SyntaxError" in error:
-                    return -15.0  # Syntax error penalty
+                    reward = -15.0  # Syntax error penalty
                 elif "timeout" in error.lower():
-                    return -12.0  # Timeout penalty
+                    reward = -12.0  # Timeout penalty
                 else:
-                    return -10.0  # General execution failure
+                    reward = -10.0  # General execution failure
+                  
+                print(f"[DEBUG] Execution failed - Final Reward: {reward}")
+                print("=" * 80)
+                return reward
 
         except Exception as e:
             print(f"Error in testing framework: {e}")

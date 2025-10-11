@@ -121,6 +121,11 @@ class SandboxedPythonCoder(ForgeActor):
             The captured stdout and stderr from the execution, as a
             (stdout, stderr) tuple of strings.
         """
+        print("=" * 80)
+        print("[DEBUG] INPUT CODE:")
+        print("-" * 80)
+        print(code)
+        print("-" * 80)
         logging.debug(f"Executing {code}")
         if not self._initialized:
             raise RuntimeError("Container not initialized. Call recreate() first.")
@@ -148,4 +153,12 @@ class SandboxedPythonCoder(ForgeActor):
             )
             output = result.stdout
             error = result.stderr
+            
+            print("[DEBUG] EXECUTION OUTPUTS:")
+            print("-" * 80)
+            print(f"Return Code: {result.returncode}")
+            print(f"\nSTDOUT:\n{output if output else '(empty)'}")
+            print(f"\nSTDERR:\n{error if error else '(empty)'}")
+            print("=" * 80)
+            
             return output, error
