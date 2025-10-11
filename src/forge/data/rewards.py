@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import re
-import asyncio
 from typing import Optional
 
 from forge.interfaces import Reward
@@ -120,24 +119,28 @@ class GroundTruthTestReward(Reward):
     def __init__(self, coder_actor=None):
         self.coder_actor = coder_actor
 
-    async def evaluate_async(self, prompt: str, response: str, test_cases: list[str]) -> float:
-        """Async evaluation of code against test cases."""
-        if not self.coder_actor:
-            return -5.0  # Penalty for missing execution environment
+    def evaluate_sync(self, prompt: str, response: str, test_cases: list[str]) -> float:
+        """Synchronous evaluation wrapper - returns reward score directly by running async code."""
+        # This function needs to handle the async coder_actor.execute() call
+        # Since we're called from an async context, we'll create an async inner function
+        # and return it as a coroutine
+        async def _async_evaluate():
+            if not self.coder_actor:
+                return -5.0  # Penalty for missing execution environment
 
-        raw_content = response
-        text = remove_thinking_tags(raw_content)
-        code = extract_python_code(text)
+            raw_content = response
+            text = remove_thinking_tags(raw_content)
+            code = extract_python_code(text)
 
-        if not code:
-            return -10.0  # Strong penalty for no code
+            if not code:
+                return -10.0  # Strong penalty for no code
 
-        if not test_cases:
-            return -5.0  # Penalty for no test cases
+            if not test_cases:
+                return -5.0  # Penalty for no test cases
 
-        try:
-            # Create proper test script with individual test case validation
-            common_imports = """
+            try:
+                # Create proper test script with individual test case validation
+                common_imports = """
 import math
 import re
 import sys
@@ -149,7 +152,7 @@ import collections
 from typing import List, Dict, Set, Tuple, Optional, Any, Union
 from collections import defaultdict, Counter, deque
 """
-            test_script = f"""
+                test_script = f"""
 {common_imports}
 
 {code}
@@ -160,12 +163,12 @@ total = {len(test_cases)}
 failed_tests = []
 
 """
-            # Add each test case with proper error handling
-            for j, test_case in enumerate(test_cases):
-                # Clean the test case - remove extra whitespace and ensure it's a valid assertion
-                test_case = test_case.strip()
-                test_num = j + 1
-                test_script += f"""
+                # Add each test case with proper error handling
+                for j, test_case in enumerate(test_cases):
+                    # Clean the test case - remove extra whitespace and ensure it's a valid assertion
+                    test_case = test_case.strip()
+                    test_num = j + 1
+                    test_script += f"""
 try:
     {test_case}
     passed += 1
@@ -175,7 +178,7 @@ except Exception as e:
     print("Test {test_num} FAILED: " + str(e))
 """
 
-            test_script += f"""
+                test_script += f"""
 success_rate = passed / total if total > 0 else 0.0
 print("PASSED:" + str(passed))
 print("TOTAL:" + str(total))
@@ -187,76 +190,79 @@ if failed_tests:
         print("  " + failed)
 """
 
-            # Execute code using the coder actor
-            output, error = await self.coder_actor.execute(test_script)
-            results_output = output + "\n" + error
-              
-            print("=" * 80)
-            print("[DEBUG] GroundTruthTestReward - RESULTS OUTPUT:")
-            print("-" * 80)
-            print(results_output)
-            print("-" * 80)
-
-            if output and "PASSED:" in output:
-                # Parse results from output
-                passed = 0
-                total = len(test_cases)
-
-                for line in results_output.split("\n"):
-                    if line.startswith("PASSED:"):
-                        try:
-                            passed = int(line.split(":")[1].strip())
-                        except (ValueError, IndexError):
-                            pass
-                    elif line.startswith("TOTAL:"):
-                        try:
-                            total = int(line.split(":")[1].strip())
-                        except (ValueError, IndexError):
-                            pass
-
-                success_rate = passed / total if total > 0 else 0.0
+                # Execute code using the coder actor - this is the async call
+                output, error = await self.coder_actor.execute(test_script)
+                results_output = output + "\n" + error
                   
-                print(f"[DEBUG] Test Results: passed={passed}/{total}, success_rate={success_rate:.2%}")
-
-                # Improved reward based on success rate with better granularity
-                if success_rate == 1.0:
-                    reward = 20.0  # Perfect score
-                elif success_rate >= 0.8:
-                    reward = 15.0  # Very good
-                elif success_rate >= 0.6:
-                    reward = 10.0  # Good
-                elif success_rate >= 0.4:
-                    reward = 5.0  # Fair
-                elif success_rate >= 0.2:
-                    reward = 2.0  # Poor but some progress
-                elif success_rate > 0.0:
-                    reward = -2.0  # Very poor but at least some test passed
-                else:
-                    reward = -8.0  # Complete failure - no tests passed
-                  
-                print(f"[DEBUG] Final Reward: {reward}")
                 print("=" * 80)
+                print("[DEBUG] GroundTruthTestReward - RESULTS OUTPUT:")
+                print("-" * 80)
+                print(results_output)
+                print("-" * 80)
 
-                return reward
-            else:
-                # Execution failed - check if it's a syntax error or runtime error
-                if "SyntaxError" in error:
-                    reward = -15.0  # Syntax error penalty
-                elif "timeout" in error.lower():
-                    reward = -12.0  # Timeout penalty
+                if output and "PASSED:" in output:
+                    # Parse results from output
+                    passed = 0
+                    total = len(test_cases)
+
+                    for line in results_output.split("\n"):
+                        if line.startswith("PASSED:"):
+                            try:
+                                passed = int(line.split(":")[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+                        elif line.startswith("TOTAL:"):
+                            try:
+                                total = int(line.split(":")[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+
+                    success_rate = passed / total if total > 0 else 0.0
+                      
+                    print(f"[DEBUG] Test Results: passed={passed}/{total}, success_rate={success_rate:.2%}")
+
+                    # Improved reward based on success rate with better granularity
+                    if success_rate == 1.0:
+                        reward = 20.0  # Perfect score
+                    elif success_rate >= 0.8:
+                        reward = 15.0  # Very good
+                    elif success_rate >= 0.6:
+                        reward = 10.0  # Good
+                    elif success_rate >= 0.4:
+                        reward = 5.0  # Fair
+                    elif success_rate >= 0.2:
+                        reward = 2.0  # Poor but some progress
+                    elif success_rate > 0.0:
+                        reward = -2.0  # Very poor but at least some test passed
+                    else:
+                        reward = -8.0  # Complete failure - no tests passed
+                      
+                    print(f"[DEBUG] Final Reward: {reward}")
+                    print("=" * 80)
+
+                    return reward
                 else:
-                    reward = -10.0  # General execution failure
-                  
-                print(f"[DEBUG] Execution failed - Final Reward: {reward}")
-                print("=" * 80)
-                return reward
+                    # Execution failed - check if it's a syntax error or runtime error
+                    if "SyntaxError" in error:
+                        reward = -15.0  # Syntax error penalty
+                    elif "timeout" in error.lower():
+                        reward = -12.0  # Timeout penalty
+                    else:
+                        reward = -10.0  # General execution failure
+                      
+                    print(f"[DEBUG] Execution failed - Final Reward: {reward}")
+                    print("=" * 80)
+                    return reward
 
-        except Exception as e:
-            print(f"Error in testing framework: {e}")
-            return -10.0  # Error in testing framework itself
+            except Exception as e:
+                print(f"Error in testing framework: {e}")
+                return -10.0  # Error in testing framework itself
+        
+        # Return the coroutine - it will be awaited by the caller
+        return _async_evaluate()
 
-    async def __call__(self, prompt: str, response: str, test_cases: list[str] | None = None) -> float:
-        """Async call method to be used in async contexts."""
+    def __call__(self, prompt: str, response: str, test_cases: list[str] | None = None):
+        """Call method - returns a coroutine that evaluates code against test cases."""
         if test_cases is None:
             test_cases = []
-        return await self.evaluate_async(prompt, response, test_cases)
+        return self.evaluate_sync(prompt, response, test_cases)
