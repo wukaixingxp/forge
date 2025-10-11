@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from forge.actors.coder import SandboxedPythonCoder
 
 
-async def run_test_case(coder: SandboxedPythonCoder, name: str, code: str):
+async def run_test_case(coder, name: str, code: str):
     """Run a single test case and display results."""
     print(f"\n{'='*80}")
     print(f"TEST CASE: {name}")
@@ -31,13 +31,15 @@ async def run_test_case(coder: SandboxedPythonCoder, name: str, code: str):
     print(f"Code to execute:\n{code}\n")
     
     try:
-        stdout, stderr = await coder.execute.call(code)
+        stdout, stderr = await coder.execute.call_one(code=code)
         print(f"✓ Test completed")
         print(f"\nCaptured stdout:\n{stdout if stdout else '(empty)'}")
         print(f"\nCaptured stderr:\n{stderr if stderr else '(empty)'}")
         return True
     except Exception as e:
         print(f"✗ Test failed with exception: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -45,17 +47,14 @@ async def main():
     """Run all test cases."""
     print("Initializing SandboxedPythonCoder...")
     
-    # Create the coder instance with a custom container name
-    coder = SandboxedPythonCoder(
+    # Spawn the actor using the Monarch framework
+    coder = await SandboxedPythonCoder.as_actor(
         docker_image="docker://python:3.10",
         sqsh_image_path="/tmp/python-test.sqsh",
         container_name="test_sandbox"
     )
     
-    # Setup the container (import image and create container)
-    print("Setting up container (this may take a while on first run)...")
-    await coder.setup.call()
-    print("✓ Container setup complete\n")
+    print("✓ Actor spawned and container setup complete\n")
     
     # Test cases
     test_cases = [
@@ -160,12 +159,19 @@ print("This goes to stderr", file=sys.stderr)
     print(f"\n{'='*80}")
     print("Testing Container Recreate Functionality")
     print(f"{'='*80}")
-    await coder.recreate.call()
+    await coder.recreate.call_one()
     print("✓ Container recreated successfully")
     
     # Run a simple test after recreate
-    stdout, stderr = await coder.execute.call('print("Container is working after recreate!")')
+    stdout, stderr = await coder.execute.call_one(code='print("Container is working after recreate!")')
     print(f"Output after recreate: {stdout}")
+    
+    # Clean up the actor
+    print(f"\n{'='*80}")
+    print("Cleaning up actor...")
+    print(f"{'='*80}")
+    await SandboxedPythonCoder.shutdown(coder)
+    print("✓ Actor shutdown complete")
     
     print(f"\n{'='*80}")
     print("All tests completed!")
