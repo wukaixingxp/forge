@@ -31,7 +31,7 @@ async def run_test_case(coder: SandboxedPythonCoder, name: str, code: str):
     print(f"Code to execute:\n{code}\n")
     
     try:
-        stdout, stderr = await coder.execute(code)
+        stdout, stderr = await coder.execute.call(code)
         print(f"✓ Test completed")
         print(f"\nCaptured stdout:\n{stdout if stdout else '(empty)'}")
         print(f"\nCaptured stderr:\n{stderr if stderr else '(empty)'}")
@@ -54,7 +54,7 @@ async def main():
     
     # Setup the container (import image and create container)
     print("Setting up container (this may take a while on first run)...")
-    await coder.setup()
+    await coder.setup.call()
     print("✓ Container setup complete\n")
     
     # Test cases
@@ -160,11 +160,11 @@ print("This goes to stderr", file=sys.stderr)
     print(f"\n{'='*80}")
     print("Testing Container Recreate Functionality")
     print(f"{'='*80}")
-    await coder.recreate()
+    await coder.recreate.call()
     print("✓ Container recreated successfully")
     
     # Run a simple test after recreate
-    stdout, stderr = await coder.execute('print("Container is working after recreate!")')
+    stdout, stderr = await coder.execute.call('print("Container is working after recreate!")')
     print(f"Output after recreate: {stdout}")
     
     print(f"\n{'='*80}")
