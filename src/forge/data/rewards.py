@@ -6,6 +6,7 @@
 
 import re
 from typing import Optional
+import traceback
 
 from forge.interfaces import Reward
 
@@ -221,34 +222,18 @@ if failed_tests:
                       
                     print(f"[DEBUG] Test Results: passed={passed}/{total}, success_rate={success_rate:.2%}")
 
-                    # Improved reward based on success rate with better granularity
-                    if success_rate == 1.0:
-                        reward = 20.0  # Perfect score
-                    elif success_rate >= 0.8:
-                        reward = 15.0  # Very good
-                    elif success_rate >= 0.6:
-                        reward = 10.0  # Good
-                    elif success_rate >= 0.4:
-                        reward = 5.0  # Fair
-                    elif success_rate >= 0.2:
-                        reward = 2.0  # Poor but some progress
-                    elif success_rate > 0.0:
-                        reward = -2.0  # Very poor but at least some test passed
-                    else:
-                        reward = -8.0  # Complete failure - no tests passed
-                      
-                    print(f"[DEBUG] Final Reward: {reward}")
-                    print("=" * 80)
+                    # Reward based on success rate
+                    reward = success_rate 
 
                     return reward
                 else:
                     # Execution failed - check if it's a syntax error or runtime error
                     if "SyntaxError" in error:
-                        reward = -15.0  # Syntax error penalty
+                        reward = 0.0  # Syntax error penalty
                     elif "timeout" in error.lower():
-                        reward = -12.0  # Timeout penalty
+                        reward = 0.0  # Timeout penalty
                     else:
-                        reward = -10.0  # General execution failure
+                        reward = 0.0  # General execution failure
                       
                     print(f"[DEBUG] Execution failed - Final Reward: {reward}")
                     print("=" * 80)
@@ -256,7 +241,10 @@ if failed_tests:
 
             except Exception as e:
                 print(f"Error in testing framework: {e}")
-                return -10.0  # Error in testing framework itself
+                print("Full traceback:")
+                print(traceback.format_exc())
+                return 0.0  # Error in testing framework itself
+
         
         # Return the coroutine - it will be awaited by the caller
         return _async_evaluate()
