@@ -2,8 +2,8 @@
 # >>> python -m apps.coding-grpo.main --config apps/coding-grpo/qwen3_1_7b.yaml
 
 # Global configuration
-group_size: 4  # Reduced for coding tasks due to longer sequences
-batch_size: 2   # Reduced due to longer sequences and memory constraints
+group_size: 8  # Reduced for coding tasks due to longer sequences
+batch_size: 8   # Reduced due to longer sequences and memory constraints
 max_req_tokens: 1024  # Increased for coding prompts with examples
 max_res_tokens: 1024  # Increased for longer code generation with thinking
 model: "Qwen/Qwen3-1.7B"
@@ -59,7 +59,7 @@ trainer:
     local_batch_size: ${batch_size}
     seq_len: 2048
     max_norm: 1.0
-    steps: 2000
+    steps: 250
     dtype: bfloat16
     gc_freq: 1
   compile:
