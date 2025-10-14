@@ -4,8 +4,8 @@
 # Global configuration
 group_size: 8  # Reduced for coding tasks due to longer sequences
 batch_size: 8   # Reduced due to longer sequences and memory constraints
-max_req_tokens: 1024  # Increased for coding prompts with examples
-max_res_tokens: 1024  # Increased for longer code generation with thinking
+max_req_tokens: 4096  # Increased for coding prompts with examples
+max_res_tokens: 4096  # Increased for longer code generation with thinking
 model: "Qwen/Qwen3-1.7B"
 off_by_n: 1 # Off by one by default
 
@@ -57,7 +57,7 @@ trainer:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
-    seq_len: 2048
+    seq_len: 8192
     max_norm: 0.5
     steps: 2500
     dtype: bfloat16
