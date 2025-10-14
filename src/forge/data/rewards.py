@@ -115,7 +115,16 @@ def extract_python_code(text: str) -> Optional[str]:
 
 
 class GroundTruthTestReward(Reward):
-    """Reward class for evaluating code against ground truth test cases using sandboxed execution."""
+    """Reward class for evaluating code against ground truth test cases using sandboxed execution.
+    
+    Uses a dense reward structure (0.0 to 1.0) with progressive milestones:
+    - 0.05: Code extracted from response
+    - 0.10: Code is syntactically valid
+    - 0.15: Code executes without immediate crash
+    - 0.70: Scaled by test success rate (0-100%)
+    
+    Total possible reward: 1.0
+    """
 
     def __init__(self, coder_actor=None):
         self.coder_actor = coder_actor
@@ -126,18 +135,37 @@ class GroundTruthTestReward(Reward):
         # Since we're called from an async context, we'll create an async inner function
         # and return it as a coroutine
         async def _async_evaluate():
+            reward = 0.0
+            
             if not self.coder_actor:
-                return -5.0  # Penalty for missing execution environment
+                print("[DEBUG] No coder_actor available - Reward: 0.0")
+                return 0.0
+
+            if not test_cases:
+                print("[DEBUG] No test cases provided - Reward: 0.0")
+                return 0.0
 
             raw_content = response
             text = remove_thinking_tags(raw_content)
             code = extract_python_code(text)
 
             if not code:
-                return -10.0  # Strong penalty for no code
+                print("[DEBUG] No code extracted - Reward: 0.0")
+                return 0.0
+            
+            # Milestone 1: Code extracted successfully
+            reward += 0.05
+            print(f"[DEBUG] ✓ Code extracted - Reward: {reward:.3f}")
 
-            if not test_cases:
-                return -5.0  # Penalty for no test cases
+            # First, check if code is syntactically valid
+            try:
+                compile(code, '<string>', 'exec')
+                # Milestone 2: Code is syntactically valid
+                reward += 0.10
+                print(f"[DEBUG] ✓ Syntax valid - Reward: {reward:.3f}")
+            except SyntaxError as e:
+                print(f"[DEBUG] ✗ Syntax error: {e} - Final Reward: {reward:.3f}")
+                return reward
 
             try:
                 # Create proper test script with individual test case validation
@@ -201,7 +229,18 @@ if failed_tests:
                 print(results_output)
                 print("-" * 80)
 
-                if output and "PASSED:" in output:
+                # Check for timeout or immediate crash
+                if "timeout" in error.lower():
+                    print(f"[DEBUG] ✗ Timeout - Final Reward: {reward:.3f}")
+                    print("=" * 80)
+                    return reward
+                
+                # Check if code executed without immediate crash (got to test execution stage)
+                if output and ("PASSED:" in output or "Test " in output):
+                    # Milestone 3: Code executed without immediate crash
+                    reward += 0.15
+                    print(f"[DEBUG] ✓ Code executed - Reward: {reward:.3f}")
+                    
                     # Parse results from output
                     passed = 0
                     total = len(test_cases)
@@ -219,31 +258,30 @@ if failed_tests:
                                 pass
 
                     success_rate = passed / total if total > 0 else 0.0
+                    
+                    # Milestone 4: Test success (scaled by success rate)
+                    test_reward = 0.70 * success_rate
+                    reward += test_reward
                       
-                    print(f"[DEBUG] Test Results: passed={passed}/{total}, success_rate={success_rate:.2%}")
-
-                    # Reward based on success rate
-                    reward = success_rate 
+                    print(f"[DEBUG] ✓ Tests: {passed}/{total} ({success_rate:.1%}) - Test reward: +{test_reward:.3f}")
+                    print(f"[DEBUG] Final Reward: {reward:.3f}")
+                    print("=" * 80)
 
                     return reward
                 else:
-                    # Execution failed - check if it's a syntax error or runtime error
-                    if "SyntaxError" in error:
-                        reward = 0.0  # Syntax error penalty
-                    elif "timeout" in error.lower():
-                        reward = 0.0  # Timeout penalty
-                    else:
-                        reward = 0.0  # General execution failure
-                      
-                    print(f"[DEBUG] Execution failed - Final Reward: {reward}")
+                    # Code crashed before getting to tests
+                    print(f"[DEBUG] ✗ Runtime crash before tests - Final Reward: {reward:.3f}")
+                    if error:
+                        print(f"[DEBUG] Error: {error[:200]}")
                     print("=" * 80)
                     return reward
 
             except Exception as e:
-                print(f"Error in testing framework: {e}")
+                print(f"[DEBUG] ✗ Testing framework error: {e} - Final Reward: {reward:.3f}")
                 print("Full traceback:")
                 print(traceback.format_exc())
-                return 0.0  # Error in testing framework itself
+                print("=" * 80)
+                return reward
 
         
         # Return the coroutine - it will be awaited by the caller
