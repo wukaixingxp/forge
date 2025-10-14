@@ -258,72 +258,32 @@ class DatasetActor(ForgeActor):
     def setup(self):
         self._tokenizer = get_tokenizer(self.model)
 
-        def get_coding_system_prompt():
-            """Get system prompt that encourages deep thinking for coding tasks."""
-            return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
+          def get_coding_system_prompt():
+              """Get system prompt for coding tasks."""
+              return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
 
-IMPORTANT: You must structure your response in two parts:
-1. First, write your detailed reasoning and problem-solving approach inside <think></think> tags
-2. Then, provide your final solution after the thinking section
+Given a problem description, write a Python function that solves it following these guidelines:
 
-Given a problem description, follow this process:
-
-<think>
-- Carefully analyze the problem requirements and constraints
-- Break down the problem into smaller components
-- Consider multiple approaches and their trade-offs
-- Think through edge cases and potential issues
-- Plan your algorithm step by step
-- Consider time and space complexity
-- Think about how to test your solution thoroughly
-</think>
-
-Then write a Python function that solves the problem following these guidelines:
-1. Write clean, readable, and efficient Python code
-2. Add a comprehensive docstring explaining what the function does
-3. Handle edge cases appropriately
-4. Use only standard library imports unless specified otherwise
-5. Ensure your solution is correct and robust
+1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
+2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
+3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
+4. **Use standard library only**: Unless explicitly specified otherwise in the problem
+5. **Ensure correctness**: Your solution should be robust and handle all requirements
 
 Format your response as:
-<think>
-[Your detailed reasoning, analysis, and planning here]
-</think>
 
 ```python
 def function_name(parameters):
-    \"\"\"Comprehensive docstring explaining the function.\"\"\" 
+    \"\"\"Comprehensive docstring explaining the function.\"\"\"     
     # Implementation
     pass
-```"""
+```
+
+Provide the final, working solution. Focus on correctness, readability, and efficiency."""
 
         def transform_sample(sample):
             # Handle different dataset formats
-            if self.path == "openai/gsm8k":
-                # GSM8K format: {"question": "...", "answer": "..."}
-                if not sample.get("question") or not sample.get("answer"):
-                    return None
-
-                system_prompt = get_coding_system_prompt()
-                request: str = sample["question"]
-                as_chat = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request},
-                ]
-                formatted_request = self._tokenizer.apply_chat_template(
-                    as_chat,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-                return {
-                    "request": formatted_request,
-                    "target": sample["answer"],  # Use answer as target
-                    "task_id": str(hash(sample["question"])),  # Generate task ID
-                    "source": "gsm8k",
-                    "difficulty": "unknown",
-                }
-
-            elif self.path == "TIGER-Lab/AceCode-87K":
+            if self.path == "TIGER-Lab/AceCode-87K":
                 # AceCode format with OSS filtering
                 if (
                     sample.get("source") != "oss"
@@ -469,7 +429,7 @@ async def main(cfg: DictConfig):
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
-    thinking_reward = ThinkingReward()
+    #thinking_reward = ThinkingReward()
 
     (
         dataloader,
@@ -491,7 +451,7 @@ async def main(cfg: DictConfig):
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
         ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
         RewardActor.options(**cfg.services.reward_actor).as_service(
-            reward_functions=[thinking_reward, ground_truth_reward]
+            reward_functions=[ground_truth_reward]
         ),
     )
 
