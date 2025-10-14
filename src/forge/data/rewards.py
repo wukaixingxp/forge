@@ -146,6 +146,12 @@ class GroundTruthTestReward(Reward):
                 return 0.0
 
             raw_content = response
+            print("=" * 80)
+            print("[DEBUG] RAW CONTENT FROM MODEL:")
+            print("-" * 80)
+            print(raw_content)
+            print("-" * 80)
+            
             text = remove_thinking_tags(raw_content)
             code = extract_python_code(text)
 
