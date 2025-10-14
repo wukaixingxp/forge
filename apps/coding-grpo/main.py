@@ -258,9 +258,9 @@ class DatasetActor(ForgeActor):
     def setup(self):
         self._tokenizer = get_tokenizer(self.model)
 
-          def get_coding_system_prompt():
-              """Get system prompt for coding tasks."""
-              return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
+        def get_coding_system_prompt():
+            """Get system prompt for coding tasks."""
+            return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
 
 Given a problem description, write a Python function that solves it following these guidelines:
 
