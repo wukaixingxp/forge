@@ -40,8 +40,8 @@ policy:
   sampling_config:
     n: ${group_size}
     max_tokens: ${max_res_tokens}
-    temperature: 1.0
-    top_p: 1.0
+    temperature: 0.6
+    top_p: 0.95
 
 # Trainer configuration
 trainer:
@@ -51,15 +51,15 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 1e-5
+    lr: 5e-7
     eps: 1e-8
   lr_scheduler:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
     seq_len: 2048
-    max_norm: 1.0
-    steps: 250
+    max_norm: 0.5
+    steps: 2500
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -77,7 +77,7 @@ trainer:
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 100
+    interval: 250
     async_mode: "disabled"
   activation_checkpoint:
     mode: selective

@@ -303,6 +303,7 @@ Provide the final, working solution. Focus on correctness, readability, and effi
                     as_chat,
                     tokenize=False,
                     add_generation_prompt=True,
+                    enable_thinking=True,
                 )
                 test_cases = sample.get("test_cases", [])
                 return {
