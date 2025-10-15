@@ -20,7 +20,7 @@ from forge.actors._torchstore_utils import (
     get_dcp_whole_state_dict_key,
     get_param_prefix,
 )
-from forge.actors.coder import SandboxedPythonCoder
+from forge.actors.podman_coder import PodmanPythonCoder
 from forge.actors.policy import Policy
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
@@ -422,15 +422,14 @@ async def main(cfg: DictConfig):
     # ---- Setup services ---- #
 
     # Setup coding environment
-    coder_actor = await SandboxedPythonCoder.as_actor(
-        docker_image="docker://python:3.10",
-        sqsh_image_path="/tmp/python-coder.sqsh",
-        container_name="coder_sandbox"
+    coder_actor = await PodmanPythonCoder.as_actor(
+        container_image="python:3.10",
+        container_name="coder_sandbox",
     )
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
-    #thinking_reward = ThinkingReward()
+    # thinking_reward = ThinkingReward()
 
     (
         dataloader,

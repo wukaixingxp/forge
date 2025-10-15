@@ -4,11 +4,24 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import logging
 import re
-from typing import Optional
 import traceback
+from typing import Any, Coroutine, Optional
 
 from forge.interfaces import Reward
+
+# Configure logger with process ID for multi-process debugging
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "[%(asctime)s] [PID:%(process)d] [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 class MathReward(Reward):
@@ -116,61 +129,64 @@ def extract_python_code(text: str) -> Optional[str]:
 
 class GroundTruthTestReward(Reward):
     """Reward class for evaluating code against ground truth test cases using sandboxed execution.
-    
+
     Uses a dense reward structure (0.0 to 1.0) with progressive milestones:
     - 0.05: Code extracted from response
     - 0.10: Code is syntactically valid
     - 0.15: Code executes without immediate crash
     - 0.70: Scaled by test success rate (0-100%)
-    
+
     Total possible reward: 1.0
     """
 
     def __init__(self, coder_actor=None):
         self.coder_actor = coder_actor
 
-    def evaluate_sync(self, prompt: str, response: str, test_cases: list[str]) -> float:
-        """Synchronous evaluation wrapper - returns reward score directly by running async code."""
+    def evaluate_sync(
+        self, prompt: str, response: str, test_cases: list[str]
+    ) -> Coroutine[Any, Any, float]:
+        """Evaluation method - returns a coroutine that evaluates code against test cases."""
+
         # This function needs to handle the async coder_actor.execute() call
         # Since we're called from an async context, we'll create an async inner function
         # and return it as a coroutine
         async def _async_evaluate():
             reward = 0.0
-            
+
             if not self.coder_actor:
-                print("[DEBUG] No coder_actor available - Reward: 0.0")
+                logger.info("No coder_actor available - Reward: 0.0")
                 return 0.0
 
             if not test_cases:
-                print("[DEBUG] No test cases provided - Reward: 0.0")
+                logger.info("No test cases provided - Reward: 0.0")
                 return 0.0
 
             raw_content = response
-            print("=" * 80)
-            print("[DEBUG] RAW CONTENT FROM MODEL:")
-            print("-" * 80)
-            print(raw_content)
-            print("-" * 80)
-            
+            logger.info("=" * 80)
+            logger.info("RAW CONTENT FROM MODEL:")
+            logger.info("-" * 80)
+            logger.info(raw_content)
+            logger.info("-" * 80)
+
             text = remove_thinking_tags(raw_content)
             code = extract_python_code(text)
 
             if not code:
-                print("[DEBUG] No code extracted - Reward: 0.0")
+                logger.info("No code extracted - Reward: 0.0")
                 return 0.0
-            
+
             # Milestone 1: Code extracted successfully
             reward += 0.05
-            print(f"[DEBUG] ✓ Code extracted - Reward: {reward:.3f}")
+            logger.info(f"✓ Code extracted - Reward: {reward:.3f}")
 
             # First, check if code is syntactically valid
             try:
-                compile(code, '<string>', 'exec')
+                compile(code, "<string>", "exec")
                 # Milestone 2: Code is syntactically valid
                 reward += 0.10
-                print(f"[DEBUG] ✓ Syntax valid - Reward: {reward:.3f}")
+                logger.info(f"✓ Syntax valid - Reward: {reward:.3f}")
             except SyntaxError as e:
-                print(f"[DEBUG] ✗ Syntax error: {e} - Final Reward: {reward:.3f}")
+                logger.info(f"✗ Syntax error: {e} - Final Reward: {reward:.3f}")
                 return reward
 
             try:
@@ -226,27 +242,29 @@ if failed_tests:
 """
 
                 # Execute code using the coder actor - this is the async call
-                output, error = await self.coder_actor.execute.call_one(code=test_script)
+                output, error = await self.coder_actor.execute.call_one(
+                    code=test_script
+                )
                 results_output = output + "\n" + error
-                  
-                print("=" * 80)
-                print("[DEBUG] GroundTruthTestReward - RESULTS OUTPUT:")
-                print("-" * 80)
-                print(results_output)
-                print("-" * 80)
+
+                logger.info("=" * 80)
+                logger.info("GroundTruthTestReward - RESULTS OUTPUT:")
+                logger.info("-" * 80)
+                logger.info(results_output)
+                logger.info("-" * 80)
 
                 # Check for timeout or immediate crash
                 if "timeout" in error.lower():
-                    print(f"[DEBUG] ✗ Timeout - Final Reward: {reward:.3f}")
-                    print("=" * 80)
+                    logger.info(f"✗ Timeout - Final Reward: {reward:.3f}")
+                    logger.info("=" * 80)
                     return reward
-                
+
                 # Check if code executed without immediate crash (got to test execution stage)
                 if output and ("PASSED:" in output or "Test " in output):
                     # Milestone 3: Code executed without immediate crash
                     reward += 0.15
-                    print(f"[DEBUG] ✓ Code executed - Reward: {reward:.3f}")
-                    
+                    logger.info(f"✓ Code executed - Reward: {reward:.3f}")
+
                     # Parse results from output
                     passed = 0
                     total = len(test_cases)
@@ -264,36 +282,43 @@ if failed_tests:
                                 pass
 
                     success_rate = passed / total if total > 0 else 0.0
-                    
+
                     # Milestone 4: Test success (scaled by success rate)
                     test_reward = 0.70 * success_rate
                     reward += test_reward
-                      
-                    print(f"[DEBUG] ✓ Tests: {passed}/{total} ({success_rate:.1%}) - Test reward: +{test_reward:.3f}")
-                    print(f"[DEBUG] Final Reward: {reward:.3f}")
-                    print("=" * 80)
+
+                    logger.info(
+                        f"✓ Tests: {passed}/{total} ({success_rate:.1%}) - Test reward: +{test_reward:.3f}"
+                    )
+                    logger.info(f"Final Reward: {reward:.3f}")
+                    logger.info("=" * 80)
 
                     return reward
                 else:
                     # Code crashed before getting to tests
-                    print(f"[DEBUG] ✗ Runtime crash before tests - Final Reward: {reward:.3f}")
+                    logger.info(
+                        f"✗ Runtime crash before tests - Final Reward: {reward:.3f}"
+                    )
                     if error:
-                        print(f"[DEBUG] Error: {error[:200]}")
-                    print("=" * 80)
+                        logger.info(f"Error: {error[:200]}")
+                    logger.info("=" * 80)
                     return reward
 
             except Exception as e:
-                print(f"[DEBUG] ✗ Testing framework error: {e} - Final Reward: {reward:.3f}")
-                print("Full traceback:")
-                print(traceback.format_exc())
-                print("=" * 80)
+                logger.error(
+                    f"✗ Testing framework error: {e} - Final Reward: {reward:.3f}"
+                )
+                logger.error("Full traceback:")
+                logger.error(traceback.format_exc())
+                logger.info("=" * 80)
                 return reward
 
-        
         # Return the coroutine - it will be awaited by the caller
         return _async_evaluate()
 
-    def __call__(self, prompt: str, response: str, test_cases: list[str] | None = None):
+    def __call__(
+        self, prompt: str, response: str, test_cases: list[str] | None = None
+    ) -> Coroutine[Any, Any, float]:
         """Call method - returns a coroutine that evaluates code against test cases."""
         if test_cases is None:
             test_cases = []
