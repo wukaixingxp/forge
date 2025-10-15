@@ -7,6 +7,7 @@
 # Usage: python -m apps.grpo.main --config apps/grpo/qwen3_1_7b.yaml
 
 import asyncio
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -498,7 +499,7 @@ async def main(cfg: DictConfig):
             input_ids = torch.ones(
                 (group_size, max_req_tokens + max_res_tokens),
                 dtype=torch.long,
-                device="cuda",
+                device="cpu",  # Use CPU; vllm handles GPU placement internally
             )
             # Populate episode info and calculate rewards
             for i, (episode, response) in enumerate(zip(group.episodes, responses)):
@@ -513,9 +514,39 @@ async def main(cfg: DictConfig):
 
             t.step("reward_evaluation")
 
-            ref_logprobs = await ref_model.forward.route(
-                input_ids, max_req_tokens, return_logprobs=True
+            # Call reference model with timeout to prevent hanging
+            print(
+                f"[DEBUG] Calling ref_model.forward for group {rollout_count}, "
+                f"input_ids shape: {input_ids.shape}, device: {input_ids.device}"
             )
+            try:
+                ref_logprobs = await asyncio.wait_for(
+                    ref_model.forward.route(
+                        input_ids, max_req_tokens, return_logprobs=True
+                    ),
+                    timeout=60.0,  # 60 second timeout
+                )
+                print(
+                    f"[DEBUG] ref_model.forward completed successfully for group {rollout_count}"
+                )
+            except asyncio.TimeoutError:
+                print(
+                    f"ERROR: ref_model.forward timed out for group {rollout_count}. "
+                    "Skipping this group."
+                )
+                record_metric(
+                    "main/continuous_rollouts/count_ref_model_timeouts", 1, Reduce.SUM
+                )
+                continue
+            except Exception as e:
+                print(
+                    f"ERROR: ref_model.forward failed for group {rollout_count}: {e}. "
+                    "Skipping this group."
+                )
+                record_metric(
+                    "main/continuous_rollouts/count_ref_model_errors", 1, Reduce.SUM
+                )
+                continue
             t.step("reference_model_calculate_logprobs")
 
             for i, episode in enumerate(group.episodes):
@@ -620,6 +651,9 @@ if __name__ == "__main__":
 
     @parse
     def _main(cfg):
+        """Main entry point for GRPO training."""
+        os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
+        os.environ["NCCL_TIMEOUT_MS"] = "60000"  # 60 second timeout
         asyncio.run(main(cfg))
 
     _main()  # @parse grabs the cfg from CLI
