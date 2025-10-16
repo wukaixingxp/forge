@@ -21,8 +21,8 @@ from forge.actors._torchstore_utils import (
     get_dcp_whole_state_dict_key,
     get_param_prefix,
 )
+from forge.actors.generator import Generator
 from forge.actors.podman_coder import PodmanPythonCoder
-from forge.actors.policy import Policy
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import RLTrainer
@@ -30,6 +30,7 @@ from forge.cli.config import parse
 from forge.controller.actor import ForgeActor
 from forge.controller.provisioner import init_provisioner, shutdown
 from forge.data.rewards import GroundTruthTestReward, ThinkingReward
+from forge.data_models.completion import Completion
 from forge.observability.metric_actors import get_or_create_metric_logger
 from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
@@ -43,83 +44,56 @@ from vllm.transformers_utils.tokenizer import get_tokenizer
 
 @dataclass
 class Episode:
-    # TODO: add adtional layer for multi-turn
     episode_id: str
-    request: str
-    policy_version: int
     pad_id: int
     request_len: int
     response_len: int
     target: Any | None = None
-    # processed data
-    response: str | None = None
-    request_tokens: list[int] | None = None
-    response_tokens: list[int] | None = None
+    # Processed data
+    completion: Completion | None = None
     ref_logprobs: torch.Tensor | None = None
     reward: float | None = None
     advantage: float | None = None
 
     @property
-    def request_tensor(self):
-        if self.request_tokens is None:
+    def policy_version(self) -> int | None:
+        if self.completion is None:
+            return None
+        return self.completion.generator_version
+
+    @property
+    def request_tensor(self) -> torch.Tensor:
+        if self.completion is None:
             return torch.full((self.request_len,), self.pad_id, dtype=torch.long)
-        if isinstance(self.request_tokens, torch.Tensor):
-            tensor = self.request_tokens.clone().detach()
-        else:
-            tensor = torch.tensor(self.request_tokens, dtype=torch.long)
+        request_tokens: torch.Tensor = self.completion.prompt_ids
+        tensor = torch.tensor(request_tokens, dtype=torch.long)
         if tensor.shape[0] < self.request_len:  # left pad
             diff = self.request_len - tensor.shape[0]
             tensor = F.pad(tensor, (diff, 0), value=self.pad_id)
         return tensor
 
     @property
-    def response_tensor(self):
-        if self.response_tokens is None:
+    def response_tensor(self) -> torch.Tensor:
+        if self.completion is None:
             return torch.full((self.response_len,), self.pad_id, dtype=torch.long)
-        if isinstance(self.response_tokens, torch.Tensor):
-            tensor = self.response_tokens.clone().detach()
-        else:
-            tensor = torch.tensor(self.response_tokens, dtype=torch.long)
+        response_tokens: torch.Tensor = self.completion.token_ids
+        tensor = torch.tensor(response_tokens, dtype=torch.long)
         if tensor.shape[0] < self.response_len:  # right pad
             diff = self.response_len - tensor.shape[0]
             tensor = F.pad(tensor, (0, diff), value=self.pad_id)
         return tensor
 
 
-@dataclass
-class Group:
-    group_id: str
-    episodes: list[Episode]
+# Represents the group (G) of episodes in GRPO
+Group = list[Episode]
 
-    @classmethod
-    def new_group(
-        cls,
-        group_id: int,
-        group_size: int,
-        request: str,
-        policy_version: int,
-        pad_id: int,
-        request_len: int,
-        response_len: int,
-        target: Any = None,
-    ):
-        episodes = []
-        for _ in range(group_size):
-            episodes.append(
-                Episode(
-                    episode_id=str(uuid.uuid4()),
-                    request=request,
-                    policy_version=policy_version,
-                    pad_id=pad_id,
-                    request_len=request_len,
-                    response_len=response_len,
-                    target=target,
-                )
-            )
-        return cls(str(group_id), episodes)
+# Represents the Policy Model to collect data from
+Policy = Generator
 
 
-def collate(batches: list[list[Episode]]):
+def collate(
+    batches: list[Group],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     inputs = []
     targets = []
     for batch in batches:
@@ -131,16 +105,24 @@ def collate(batches: list[list[Episode]]):
 
         ref_logprobs = [e.ref_logprobs for e in batch]
         ref_logprobs = torch.stack(ref_logprobs)  # [b x s]
+        # Only squeeze last dimension if needed, preserve batch dimension
+        if ref_logprobs.dim() > 2:
+            ref_logprobs = ref_logprobs.squeeze(-1)
 
         advantages = [e.advantage for e in batch]
         advantages = torch.tensor(advantages).unsqueeze(-1)  # [b x 1]
 
         pad_id = batch[0].pad_id
-        # Ensure mask is always a tensor, even for single batch elements
+        # Ensure mask is always a 2D tensor [b x s], even for single batch elements
         mask = response != pad_id  # [b x s]
-        # Ensure it's a tensor (handles edge cases where comparison might return scalar)
+        # Ensure it's a tensor and preserve shape
         if not isinstance(mask, torch.Tensor):
             mask = torch.tensor(mask, dtype=torch.bool)
+        # Ensure mask is always 2D
+        if mask.dim() == 0:
+            mask = mask.unsqueeze(0).unsqueeze(0)
+        elif mask.dim() == 1:
+            mask = mask.unsqueeze(0)
 
         input = {"tokens": torch.cat([request, response], dim=1)}
         target = {
@@ -242,7 +224,7 @@ class ComputeAdvantages(ForgeActor):
     @endpoint
     async def compute(self, group: Group) -> list[float]:
         # TODO: add batch processing
-        rewards = torch.tensor([[e.reward for e in group.episodes]])
+        rewards = torch.tensor([[e.reward for e in group]])
         mean = rewards.mean(1, keepdim=True)
         std = rewards.std(1, keepdim=True)
         advantages = (rewards - mean) / (std + 1e-4)
@@ -415,14 +397,17 @@ async def main(cfg: DictConfig):
     max_res_tokens = cfg.max_res_tokens
 
     # ---- Global setups ---- #
+    provisioner = None
     if cfg.get("provisioner", None) is not None:
-        await init_provisioner(
+        provisioner = await init_provisioner(
             ProvisionerConfig(launcher_config=LauncherConfig(**cfg.provisioner))
         )
+    else:
+        provisioner = await init_provisioner()
+
     metric_logging_cfg = cfg.get("metric_logging", {"console": {"log_per_rank": False}})
     mlogger = await get_or_create_metric_logger()
     await mlogger.init_backends.call_one(metric_logging_cfg)
-    await ts.initialize(strategy=ts.ControllerStorageVolumes())
 
     # ---- Setup services ---- #
 
@@ -460,13 +445,30 @@ async def main(cfg: DictConfig):
         ),
     )
 
+    # Set max_steps to the configured value, or -1 if not specified or Null
+    max_steps = cfg.trainer.training.steps or -1
+
     print("All services initialized successfully!")
+    shutdown_event = asyncio.Event()
+    # Here we spawn a torchstore storage volume per trainer process.
+    # We initialize after service initialization because torchstore currently
+    # requires access to the underlying proc meshes in the local rank strategy.
+    # We should be able to hide this in the future.
+    # TODO: support multiple host meshes
+    trainer_num_procs = cfg.actors.trainer["procs"]
+    trainer_host_mesh_name = cfg.actors.trainer["mesh_name"]
+    trainer_hosts = provisioner.get_host_mesh(trainer_host_mesh_name)
+    await ts.initialize(
+        mesh=trainer_hosts.spawn_procs(per_host={"procs": trainer_num_procs}),
+        strategy=ts.LocalRankStrategy(),
+    )
+    print("Torchstore successfully initialized with local rank strategy")
 
     # ---- Core RL loops ---- #
     async def continuous_rollouts():
         rollout_count = 0
         pad_id = await dataloader.pad_token.call_one()
-        while True:
+        while not shutdown_event.is_set():
             t = Tracer("main_perf/continuous_rollouts")
             t.start()
             sample = await dataloader.sample.call_one()
@@ -477,114 +479,47 @@ async def main(cfg: DictConfig):
             t.step("data_loading")
 
             prompt, target = sample["request"], sample["target"]
-            responses = await policy.generate.route(prompt)
-            # TODO: this shall be part of the responses metadata instead of a separate call
-            version = await policy.get_version.route()
-
+            responses: list[Completion] = await policy.generate.route(prompt)
             t.step("policy_generation")
 
-            assert (
-                len(responses) > 0
-            ), "Sanity check: Responses should NEVER return empty"
-            assert (
-                version := responses[0].generator_version
-            ) is not None, "Response must indicate a version"
-            group = Group.new_group(
-                group_id=rollout_count,
-                group_size=group_size,
-                request=prompt,
-                policy_version=version,
-                pad_id=pad_id,
-                request_len=max_req_tokens,
-                response_len=max_res_tokens,
-                target=target,
-            )
-
+            # Construct episodes and calculate rewards
+            episodes = []
             input_ids = torch.ones(
                 (group_size, max_req_tokens + max_res_tokens),
                 dtype=torch.long,
-                device="cpu",  # Use CPU; vllm handles GPU placement internally
             )
-            # Populate episode info and calculate rewards
-            for i, (episode, response) in enumerate(zip(group.episodes, responses)):
-                episode.request_tokens = response.prompt_ids
-                episode.response_tokens = response.token_ids
-                episode.response = response.text
+            for i, response in enumerate(responses):
+                episode = Episode(
+                    episode_id=str(uuid.uuid4()),
+                    pad_id=pad_id,
+                    request_len=max_req_tokens,
+                    response_len=max_res_tokens,
+                    target=target,
+                    completion=response,
+                )
+                episode.reward = await reward_actor.evaluate_response.route(
+                    prompt=prompt, response=response.text, target=target
+                )
+                episodes.append(episode)
+
+                # Build input_ids for reference logprobs
                 input_ids[i, :max_req_tokens] = episode.request_tensor
                 input_ids[i, max_req_tokens:] = episode.response_tensor
 
-                # Call reward evaluation with timeout to prevent hanging
-                try:
-                    episode.reward = await asyncio.wait_for(
-                        reward_actor.evaluate_response.route(
-                            prompt=prompt, response=response.text, target=target
-                        ),
-                        timeout=60.0,  # 60 second timeout for code execution
-                    )
-                except asyncio.TimeoutError:
-                    print(
-                        f"ERROR: reward_actor.evaluate_response timed out for episode {i} "
-                        f"in group {rollout_count}. Assigning zero reward."
-                    )
-                    episode.reward = 0.0
-                    record_metric(
-                        "main/continuous_rollouts/count_reward_timeouts", 1, Reduce.SUM
-                    )
-                except Exception as e:
-                    print(
-                        f"ERROR: reward_actor.evaluate_response failed for episode {i} "
-                        f"in group {rollout_count}: {e}. Assigning zero reward."
-                    )
-                    episode.reward = 0.0
-                    record_metric(
-                        "main/continuous_rollouts/count_reward_errors", 1, Reduce.SUM
-                    )
-
             t.step("reward_evaluation")
 
-            # Call reference model with timeout to prevent hanging
-            print(
-                f"[DEBUG] Calling ref_model.forward for group {rollout_count}, "
-                f"input_ids shape: {input_ids.shape}, device: {input_ids.device}"
+            ref_logprobs = await ref_model.forward.route(
+                input_ids, max_req_tokens, return_logprobs=True
             )
-            try:
-                ref_logprobs = await asyncio.wait_for(
-                    ref_model.forward.route(
-                        input_ids, max_req_tokens, return_logprobs=True
-                    ),
-                    timeout=60.0,  # 60 second timeout
-                )
-                print(
-                    f"[DEBUG] ref_model.forward completed successfully for group {rollout_count}"
-                )
-            except asyncio.TimeoutError:
-                print(
-                    f"ERROR: ref_model.forward timed out for group {rollout_count}. "
-                    "Skipping this group."
-                )
-                record_metric(
-                    "main/continuous_rollouts/count_ref_model_timeouts", 1, Reduce.SUM
-                )
-                continue
-            except Exception as e:
-                print(
-                    f"ERROR: ref_model.forward failed for group {rollout_count}: {e}. "
-                    "Skipping this group."
-                )
-                record_metric(
-                    "main/continuous_rollouts/count_ref_model_errors", 1, Reduce.SUM
-                )
-                continue
             t.step("reference_model_calculate_logprobs")
 
-            for i, episode in enumerate(group.episodes):
+            for i, episode in enumerate(episodes):
                 episode.ref_logprobs = ref_logprobs[i]
             del ref_logprobs, input_ids
-            t.step("compute_logprobs")
 
             # Calculate advantages and add to replay buffer
-            advantages = await compute_advantages.compute.call_one(group)
-            for episode, advantage in zip(group.episodes, advantages):
+            advantages = await compute_advantages.compute.call_one(episodes)
+            for episode, advantage in zip(episodes, advantages):
                 episode.advantage = advantage
                 await replay_buffer.add.call_one(episode)
 
@@ -599,7 +534,7 @@ async def main(cfg: DictConfig):
         training_step = 0
         restart_tracer = True  # Flag to control when to restart tracer
 
-        while True:
+        while max_steps == -1 or training_step < max_steps:
             # Restart tracer when needed (initial start or after completing a training step)
             # Otherwise, we cannot measure time waiting for buffer
             if restart_tracer:
@@ -636,6 +571,10 @@ async def main(cfg: DictConfig):
                 # Flush metrics every training step to WandB
                 await mlogger.flush.call_one(training_step)
 
+        print(
+            f"Reached training limit ({max_steps} steps). Exiting continuous_training loop."
+        )
+
     num_rollout_threads = cfg.get("rollout_threads", 1)
     num_training_threads = cfg.get("training_threads", 1)
     print(
@@ -647,31 +586,27 @@ async def main(cfg: DictConfig):
     training_task = asyncio.create_task(continuous_training())
 
     try:
-        await asyncio.gather(*rollout_tasks, training_task)
+        await training_task
     except KeyboardInterrupt:
         print("Training interrupted by user")
-        for rollout_task in rollout_tasks:
-            rollout_task.cancel()
-        training_task.cancel()
     finally:
         print("Shutting down...")
+        shutdown_event.set()
 
-        # give mlogger time to shutdown backends, otherwise they can stay running.
-        # TODO (felipemello) find more elegant solution
-        await mlogger.shutdown.call_one()
-        await asyncio.sleep(2)
+        try:
+            # Give rollouts up to 5s to finish naturally
+            await asyncio.wait_for(
+                asyncio.gather(*rollout_tasks, return_exceptions=True),
+                timeout=5,
+            )
+        except asyncio.TimeoutError:
+            print("Timeout waiting for rollouts; forcing cancellation...")
+            for t in rollout_tasks:
+                t.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
 
-        await asyncio.gather(
-            DatasetActor.shutdown(dataloader),
-            policy.shutdown(),
-            RLTrainer.shutdown(trainer),
-            ReplayBuffer.shutdown(replay_buffer),
-            ComputeAdvantages.shutdown(compute_advantages),
-            ref_model.shutdown(),
-            reward_actor.shutdown(),
-        )
-        # TODO - add a global shutdown that implicitly shuts down all services
-        # and remote allocations
+        training_task.cancel()
+
         await shutdown()
 
 

@@ -3,7 +3,7 @@
 
 # Global configuration
 group_size: 8  # Reduced for longer sequences to avoid OOM
-batch_size: 2   # Reduced for 7B model to avoid OOM
+local_batch_size: 2   # Reduced for 7B model to avoid OOM
 max_req_tokens: 4096  # Increased for coding prompts with examples
 max_res_tokens: 4096  # Increased for longer code generation with thinking
 model: "Qwen/Qwen2.5-7B"  # Using 7B as closest available size
@@ -32,7 +32,7 @@ dataset:
 
 # Policy configuration
 policy:
-  engine_config:
+  engine_args:
     model: ${model}
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
@@ -42,7 +42,7 @@ policy:
     enable_chunked_prefill: true
     max_num_batched_tokens: 8192
     max_num_seqs: 16  # Reduced for larger model
-  sampling_config:
+  sampling_params:
     n: ${group_size}
     max_tokens: ${max_res_tokens}
     temperature: 0.6
@@ -61,7 +61,7 @@ trainer:
   lr_scheduler:
     warmup_steps: 1
   training:
-    local_batch_size: ${batch_size}
+    local_batch_size: ${local_batch_size}
     seq_len: 32768
     max_norm: 0.5
     steps: 2500
@@ -90,7 +90,7 @@ trainer:
 
 # Replay buffer configuration
 replay_buffer:
-  batch_size: ${batch_size}
+  batch_size: ${local_batch_size}
   max_policy_age: ${off_by_n}
   dp_size: ${trainer.parallelism.data_parallel_shard_degree} # Must equal trainer DP degree
 
@@ -101,6 +101,7 @@ ref_model:
     flavor: 7B
     hf_assets_path: hf://${model}
   training:
+    seq_len: ${trainer.training.seq_len}
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -120,28 +121,35 @@ ref_model:
 # All resource allocations
 services:
   policy:
-    procs: ${policy.engine_config.tensor_parallel_size}
+    procs: ${policy.engine_args.tensor_parallel_size}
     num_replicas: 1
+    mesh_name: policy
     with_gpus: true
   ref_model:
     procs: 1
     num_replicas: 1
+    mesh_name: ref_model
     with_gpus: true
   reward_actor:
     procs: 1
     num_replicas: 1
+    mesh_name: reward_actor
     with_gpus: false
 
 actors:
   dataset:
     procs: 1
     with_gpus: false
+    mesh_name: dataset
   trainer:
     procs: 1
     with_gpus: true
+    mesh_name: trainer
   replay_buffer:
     procs: 1
     with_gpus: false
+    mesh_name: replay_buffer
   compute_advantages:
     procs: 1
     with_gpus: false
+    mesh_name: compute_advantages
