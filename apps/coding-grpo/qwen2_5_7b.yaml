@@ -1,19 +1,23 @@
-# Grouped Relative Policy Optimization (GRPO)
-# >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b.yaml
+# Grouped Relative Policy Optimization (GRPO) for Code Generation
+# >>> python -m apps.coding-grpo.main --config apps/coding-grpo/qwen2_5_8b.yaml
 
 # Global configuration
-group_size: 4  # Reduced for coding tasks due to longer sequences
-batch_size: 8   # Reduced due to longer sequences and memory constraints
-max_req_tokens: 1024  # Increased for coding prompts with examples
-max_res_tokens: 2048  # Increased for longer code generation with thinking
-model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+group_size: 4  # Reduced for longer sequences to avoid OOM
+batch_size: 1   # Reduced for 8B model to avoid OOM
+max_req_tokens: 16384  # Increased for coding prompts with examples
+max_res_tokens: 16384  # Increased for longer code generation with thinking
+model: "Qwen/Qwen2.5-7B"  # Using 7B as closest available size
 off_by_n: 1 # Off by one by default
+
+# Main loop configuration
+rollout_threads: 1   # Recommended to set equal to policy.num_replicas
+
 
 # Observability configuration
 metric_logging:
   wandb:
-    project: "grpo-training"
-    group: "grpo_exp_${oc.env:USER}"
+    project: "coding-grpo-training"
+    group: "coding_grpo_exp_${oc.env:USER}"
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
@@ -28,44 +32,46 @@ dataset:
 
 # Policy configuration
 policy:
-  use_vllm_builtin_load: true
   engine_config:
     model: ${model}
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: false
+    gpu_memory_utilization: 0.85
+    max_model_len: 32768
+    enable_chunked_prefill: true
+    max_num_batched_tokens: 32768
+    max_num_seqs: 8  # Reduced for larger model
   sampling_config:
     n: ${group_size}
     max_tokens: ${max_res_tokens}
-    temperature: 1.0
-    top_p: 1.0
+    temperature: 0.6
+    top_p: 0.95
 
 # Trainer configuration
 trainer:
-  use_dcp: true
-  use_vllm_builtin_load: true
   model:
-    name: llama3
-    flavor: 8B
+    name: qwen2_5
+    flavor: 7B
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 1e-5
+    lr: 5e-7
     eps: 1e-8
   lr_scheduler:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
-    seq_len: 2048
-    max_norm: 1.0
-    steps: 2000
+    seq_len: 32768
+    max_norm: 0.5
+    steps: 2500
     dtype: bfloat16
     gc_freq: 1
   compile:
     enable: false
   parallelism:
     data_parallel_replicate_degree: 1
-    data_parallel_shard_degree: -1
+    data_parallel_shard_degree: 1
     tensor_parallel_degree: 1
     pipeline_parallel_degree: 1
     context_parallel_degree: 1
@@ -76,9 +82,8 @@ trainer:
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 200
+    interval: 250
     async_mode: "disabled"
-    load_step: null  # Set to null to start fresh, or specify a valid step number to resume
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
@@ -87,16 +92,13 @@ trainer:
 replay_buffer:
   batch_size: ${batch_size}
   max_policy_age: ${off_by_n}
-  # This should match the dp_size of TorchTitan
-  # Here it's set explicitly to 2, because we've set
-  # 2 GPUs for the trainer and we're using full FSDP.
-  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree} # Must equal trainer DP degree
 
 # Reference model configuration
 ref_model:
   model:
-    name: llama3
-    flavor: 8B
+    name: qwen2_5
+    flavor: 7B
     hf_assets_path: hf://${model}
   training:
     dtype: bfloat16
@@ -111,6 +113,7 @@ ref_model:
     context_parallel_degree: 1
     expert_parallel_degree: 1
   checkpoint:
+    enable: true
     initial_load_path: hf://${model}
     initial_load_in_hf: true
 
@@ -134,7 +137,7 @@ actors:
     procs: 1
     with_gpus: false
   trainer:
-    procs: 2
+    procs: 1
     with_gpus: true
   replay_buffer:
     procs: 1
