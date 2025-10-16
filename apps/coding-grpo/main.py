@@ -130,13 +130,17 @@ def collate(batches: list[list[Episode]]):
         response = torch.stack(response)  # [b x s]
 
         ref_logprobs = [e.ref_logprobs for e in batch]
-        ref_logprobs = torch.stack(ref_logprobs).squeeze()  # [b x s]
+        ref_logprobs = torch.stack(ref_logprobs)  # [b x s]
 
         advantages = [e.advantage for e in batch]
         advantages = torch.tensor(advantages).unsqueeze(-1)  # [b x 1]
 
         pad_id = batch[0].pad_id
-        mask = response != pad_id
+        # Ensure mask is always a tensor, even for single batch elements
+        mask = response != pad_id  # [b x s]
+        # Ensure it's a tensor (handles edge cases where comparison might return scalar)
+        if not isinstance(mask, torch.Tensor):
+            mask = torch.tensor(mask, dtype=torch.bool)
 
         input = {"tokens": torch.cat([request, response], dim=1)}
         target = {
@@ -304,7 +308,7 @@ Provide the final, working solution. Focus on correctness, readability, and effi
                     as_chat,
                     tokenize=False,
                     add_generation_prompt=True,
-                    enable_thinking=True,
+                    # enable_thinking=True,
                 )
                 test_cases = sample.get("test_cases", [])
                 return {
@@ -508,9 +512,33 @@ async def main(cfg: DictConfig):
                 episode.response = response.text
                 input_ids[i, :max_req_tokens] = episode.request_tensor
                 input_ids[i, max_req_tokens:] = episode.response_tensor
-                episode.reward = await reward_actor.evaluate_response.route(
-                    prompt=prompt, response=response.text, target=target
-                )
+
+                # Call reward evaluation with timeout to prevent hanging
+                try:
+                    episode.reward = await asyncio.wait_for(
+                        reward_actor.evaluate_response.route(
+                            prompt=prompt, response=response.text, target=target
+                        ),
+                        timeout=60.0,  # 60 second timeout for code execution
+                    )
+                except asyncio.TimeoutError:
+                    print(
+                        f"ERROR: reward_actor.evaluate_response timed out for episode {i} "
+                        f"in group {rollout_count}. Assigning zero reward."
+                    )
+                    episode.reward = 0.0
+                    record_metric(
+                        "main/continuous_rollouts/count_reward_timeouts", 1, Reduce.SUM
+                    )
+                except Exception as e:
+                    print(
+                        f"ERROR: reward_actor.evaluate_response failed for episode {i} "
+                        f"in group {rollout_count}: {e}. Assigning zero reward."
+                    )
+                    episode.reward = 0.0
+                    record_metric(
+                        "main/continuous_rollouts/count_reward_errors", 1, Reduce.SUM
+                    )
 
             t.step("reward_evaluation")
 

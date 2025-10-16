@@ -140,6 +140,27 @@ class RLTrainer(ForgeActor):
                     f"{f.name} should be a {f.type} type or a dict like object"
                 )
 
+        # Debug: Print configuration objects
+        print("=" * 80)
+        print("CHECKPOINT CONFIG:")
+        print(f"  enable: {self.checkpoint.enable}")
+        print(f"  interval: {self.checkpoint.interval}")
+        print(f"  initial_load_path: {self.checkpoint.initial_load_path}")
+        print(f"  initial_load_in_hf: {self.checkpoint.initial_load_in_hf}")
+        print(f"  last_save_in_hf: {self.checkpoint.last_save_in_hf}")
+        print(f"  async_mode: {self.checkpoint.async_mode}")
+        print(f"  Full checkpoint object: {self.checkpoint}")
+        print("-" * 80)
+        print("TRAINING CONFIG:")
+        print(f"  steps: {self.training.steps}")
+        print(f"  local_batch_size: {self.training.local_batch_size}")
+        print(f"  seq_len: {self.training.seq_len}")
+        print(f"  max_norm: {self.training.max_norm}")
+        print(f"  dtype: {self.training.dtype}")
+        print(f"  gc_freq: {self.training.gc_freq}")
+        print(f"  Full training object: {self.training}")
+        print("=" * 80)
+
         self.step = 1  # fragile contract.
         self.num_training_steps = self.training.steps
         self.gradient_accumulation_steps = 1

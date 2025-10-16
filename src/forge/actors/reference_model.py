@@ -114,6 +114,9 @@ class ReferenceModel(ForgeActor):
                 )
                 self.model.model_args.max_seq_len = target_seq_len
                 self.model.freqs_cis = self.model._precompute_freqs_cis()
+                self.model.freqs_cis = self.model.freqs_cis.to(
+                    next(self.model.parameters()).device
+                )
                 new_freqs_cis_len = self.model.freqs_cis.shape[0]
                 logger.info(
                     f"New freqs_cis length after recompute: {new_freqs_cis_len}"

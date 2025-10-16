@@ -171,7 +171,7 @@ class PodmanPythonCoder(ForgeActor):
                     f"Failed to copy script to container: {copy_result.stderr}"
                 )
 
-            # Execute the code inside the container
+            # Execute the code inside the container with 30 second timeout
             cmd = [
                 "podman",
                 "exec",
@@ -179,12 +179,19 @@ class PodmanPythonCoder(ForgeActor):
                 "python3",
                 "/tmp/script.py",
             ]
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            output = result.stdout
-            error = result.stderr
+            try:
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=30,
+                )
+                output = result.stdout
+                error = result.stderr
+            except subprocess.TimeoutExpired:
+                logging.warning("Code execution timed out after 30 seconds")
+                output = ""
+                error = "Error: Code execution timed out after 30 seconds (possible infinite loop)"
+
             return output, error
