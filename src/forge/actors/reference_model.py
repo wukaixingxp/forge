@@ -13,6 +13,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 
 import torch
+
+from forge.controller import ForgeActor
+from forge.observability.metrics import record_metric, Reduce
+from forge.observability.perf_tracker import Tracer
+from forge.util.ops import compute_logprobs
 from monarch.actor import current_rank, current_size, endpoint
 from torch.distributed.tensor import DTensor
 
@@ -26,11 +31,6 @@ from torchtitan.config.job_config import (
 )
 from torchtitan.experiments.forge.engine import ForgeEngine
 from torchtitan.experiments.forge.job_config import ForgeJobConfig
-
-from forge.controller import ForgeActor
-from forge.observability.metrics import record_metric, Reduce
-from forge.observability.perf_tracker import Tracer
-from forge.util.ops import compute_logprobs
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -122,6 +122,39 @@ class ReferenceModel(ForgeActor):
         self.engine = ForgeEngine(engine_config)
         self.engine.checkpointer.load()
         self.model = self.engine.model_parts[0]  # No pipeline parallelism yet
+
+        # Reinitialize freqs_cis after checkpoint loading to ensure correct dimensions
+        # This is necessary because HF checkpoints may have incompatible freqs_cis dimensions
+        if hasattr(self.model, "freqs_cis"):
+            old_freqs_cis_len = self.model.freqs_cis.shape[0]
+            logger.info(
+                f"Original freqs_cis length from checkpoint: {old_freqs_cis_len}"
+            )
+
+            # Update model_args.max_seq_len to match the training sequence length
+            # This ensures precomputed freqs_cis has sufficient length
+            if hasattr(self.model, "model_args") and hasattr(
+                self.model.model_args, "max_seq_len"
+            ):
+                # Use the sequence length from training config, or default to current max_seq_len
+                target_seq_len = getattr(
+                    self.training, "seq_len", self.model.model_args.max_seq_len
+                )
+                old_max_seq_len = self.model.model_args.max_seq_len
+                logger.info(
+                    f"Updating max_seq_len from {old_max_seq_len} to {target_seq_len}"
+                )
+                self.model.model_args.max_seq_len = target_seq_len
+                self.model.freqs_cis = self.model._precompute_freqs_cis()
+                new_freqs_cis_len = self.model.freqs_cis.shape[0]
+                logger.info(
+                    f"New freqs_cis length after recompute: {new_freqs_cis_len}"
+                )
+            else:
+                logger.warning(
+                    "Model does not have model_args or max_seq_len attribute, cannot update freqs_cis"
+                )
+
         self.model.eval()
 
     @endpoint
