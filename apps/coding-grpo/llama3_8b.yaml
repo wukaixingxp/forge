@@ -79,6 +79,7 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
+    folder: "checkpoint_llama3_8b"
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
@@ -101,6 +102,7 @@ ref_model:
     flavor: 8B
     hf_assets_path: hf://${model}
   training:
+    seq_len: 8192
     dtype: bfloat16
     gc_freq: 1
   compile:
