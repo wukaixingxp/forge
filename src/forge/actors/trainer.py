@@ -17,7 +17,6 @@ import torch
 import torch.distributed.checkpoint as dcp
 import torchstore as ts
 
-from monarch.actor import endpoint
 from forge.actors._torchstore_utils import (
     DcpHandle,
     get_dcp_whole_state_dict_key,
@@ -26,6 +25,7 @@ from forge.actors._torchstore_utils import (
 
 from forge.controller import ForgeActor
 from forge.data.utils import batch_to_device
+from forge.env import TORCHSTORE_USE_RDMA
 from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
 
@@ -48,18 +48,6 @@ from torchtitan.config.job_config import (
 )
 from torchtitan.experiments.forge.engine import ForgeEngine
 from torchtitan.experiments.forge.job_config import ForgeJobConfig
-
-from forge.actors._torchstore_utils import (
-    DcpHandle,
-    get_dcp_whole_state_dict_key,
-    get_param_key,
-)
-
-from forge.controller import ForgeActor
-from forge.data.utils import batch_to_device
-from forge.env import TORCHSTORE_USE_RDMA
-from forge.observability.metrics import record_metric, Reduce
-from forge.observability.perf_tracker import Tracer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -362,8 +350,10 @@ class RLTrainer(ForgeActor):
         if self.use_dcp:
             key = get_dcp_whole_state_dict_key(policy_version)
             dcp_id = f"{self.dcp_path}/{key}"
+            # Use thread_count=1 to prevent thread exhaustion
+            # Default of 8 threads per checkpoint write was causing "can't start new thread" errors
             storage_writer = torch.distributed.checkpoint.FileSystemWriter(
-                dcp_id, single_file_per_rank=False, thread_count=8
+                dcp_id, single_file_per_rank=False, thread_count=1
             )
             metadata = dcp.save(storage_writer=storage_writer, state_dict=hf_state_dict)
             dcp_handle = DcpHandle(

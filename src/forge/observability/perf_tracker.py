@@ -166,6 +166,7 @@ class Tracer:
         # Stop timing
         durations, stop_step_ms = self._timer.get_all_durations()  # pyre-ignore
         self._record_timing_metrics(durations, stop_step_ms)
+        self._timer.shutdown()  # pyre-ignore
         self._timer = None
 
         # Stop memory tracking
@@ -220,14 +221,13 @@ class Tracer:
 
 
 class _TimerProtocol(Protocol):
-    def start(self) -> None:
-        ...
+    def start(self) -> None: ...
 
-    def step(self, name: str) -> None:
-        ...
+    def step(self, name: str) -> None: ...
 
-    def get_all_durations(self) -> tuple[list[tuple[str, float]], float]:
-        ...
+    def get_all_durations(self) -> tuple[list[tuple[str, float]], float]: ...
+
+    def shutdown(self) -> None: ...
 
 
 class _TimerCPU(_TimerProtocol):
@@ -261,6 +261,10 @@ class _TimerCPU(_TimerProtocol):
             stop_step_ms = (now - self._chain_start) * 1000
         return self._durations[:], stop_step_ms
 
+    def shutdown(self) -> None:
+        """Clean up resources. For CPU timer, no resources to clean up."""
+        pass
+
 
 class _TimerCUDA(_TimerProtocol):
     """CUDA timing backend with non-blocking events and futures.
@@ -275,13 +279,13 @@ class _TimerCUDA(_TimerProtocol):
         durs_steps, stop_step_ms = timer.get_all_durations()  # ([( "matmul", 100 )], 200)
     """
 
-    def __init__(self, max_workers: int = 2) -> None:
+    def __init__(self, max_workers: int = 1) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for timing")
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._futures: list[
-            tuple[str, Future[float], int]
-        ] = []  # (name, future, submission_index)
+        self._futures: list[tuple[str, Future[float], int]] = (
+            []
+        )  # (name, future, submission_index)
         self._durations: list[tuple[str, float]] = []
         self._chain_start: torch.cuda.Event | None = None
 
@@ -362,6 +366,13 @@ class _TimerCUDA(_TimerProtocol):
                 break
 
         return durations, stop_step_ms
+
+    def shutdown(self) -> None:
+        """Clean up the thread pool executor to prevent thread leaks."""
+        try:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+        except Exception:
+            pass
 
     def __del__(self) -> None:
         # Fallback cleanup in finalizer

@@ -6,8 +6,20 @@
 
 # Usage: python -m apps.grpo.main --config apps/grpo/qwen3_1_7b.yaml
 
-import asyncio
 import os
+
+# Limit OpenBLAS and MKL threads to prevent thread exhaustion
+# Must be set before importing numpy, scipy, torch, etc.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "4")
+os.environ.setdefault("MKL_NUM_THREADS", "4")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+
+# Limit Go runtime threads for Podman/container management
+# This prevents the "failed to create new OS thread" error in Podman
+os.environ.setdefault("GOMAXPROCS", "4")
+os.environ.setdefault("GOMEMLIMIT", "2GiB")
+
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
@@ -66,7 +78,11 @@ class Episode:
         if self.completion is None:
             return torch.full((self.request_len,), self.pad_id, dtype=torch.long)
         request_tokens: torch.Tensor = self.completion.prompt_ids
-        tensor = torch.tensor(request_tokens, dtype=torch.long)
+        # Use clone() if input is already a tensor to avoid warning
+        if isinstance(request_tokens, torch.Tensor):
+            tensor = request_tokens.detach().clone()
+        else:
+            tensor = torch.tensor(request_tokens, dtype=torch.long)
         if tensor.shape[0] < self.request_len:  # left pad
             diff = self.request_len - tensor.shape[0]
             tensor = F.pad(tensor, (diff, 0), value=self.pad_id)
@@ -77,7 +93,11 @@ class Episode:
         if self.completion is None:
             return torch.full((self.response_len,), self.pad_id, dtype=torch.long)
         response_tokens: torch.Tensor = self.completion.token_ids
-        tensor = torch.tensor(response_tokens, dtype=torch.long)
+        # Use clone() if input is already a tensor to avoid warning
+        if isinstance(response_tokens, torch.Tensor):
+            tensor = response_tokens.detach().clone()
+        else:
+            tensor = torch.tensor(response_tokens, dtype=torch.long)
         if tensor.shape[0] < self.response_len:  # right pad
             diff = self.response_len - tensor.shape[0]
             tensor = F.pad(tensor, (0, diff), value=self.pad_id)
@@ -412,9 +432,12 @@ async def main(cfg: DictConfig):
     # ---- Setup services ---- #
 
     # Setup coding environment
+    # Use ThreadPoolExecutor to handle concurrent executions without blocking
+    # Reduced to 2 workers to prevent resource exhaustion (each worker spawns 2 subprocesses)
     coder_actor = await PodmanPythonCoder.as_actor(
         container_image="python:3.10",
         container_name="coder_sandbox",
+        max_workers=2,  # Thread pool size for concurrent executions (reduced from 4)
     )
 
     # Setup coding reward functions
@@ -617,6 +640,7 @@ if __name__ == "__main__":
         """Main entry point for GRPO training."""
         os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
         os.environ["NCCL_TIMEOUT_MS"] = "60000"  # 60 second timeout
+        # os.environ["FORGE_DISABLE_METRICS"] = "1"
         asyncio.run(main(cfg))
 
     _main()  # @parse grabs the cfg from CLI
