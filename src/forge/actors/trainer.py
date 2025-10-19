@@ -21,6 +21,7 @@ from forge.actors._torchstore_utils import (
     DcpHandle,
     get_dcp_whole_state_dict_key,
     get_param_key,
+    rdma_available,
 )
 
 from forge.controller import ForgeActor
@@ -131,9 +132,7 @@ class RLTrainer(ForgeActor):
     # Non JobConfig-related fields
     loss: Callable = lambda logits, **targets: logits
     state_dict_key: str = "model_state_dict"
-    use_dcp: bool = (
-        TORCHSTORE_USE_RDMA.get_value() == 0
-    )  # torchstore currently only accepts 0 or 1
+    use_dcp: bool = not rdma_available()
     dcp_path: str = "forge_dcp_tmp"
 
     def __post_init__(self):
