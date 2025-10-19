@@ -16,6 +16,7 @@ rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 # Observability configuration
 metric_logging:
   wandb:
+    entity: torchforge
     project: "coding-grpo-training"
     group: "coding_grpo_exp_${oc.env:USER}"
     reduce_across_ranks: True

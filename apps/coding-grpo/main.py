@@ -38,7 +38,6 @@ from forge.actors.podman_coder import PodmanPythonCoder
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import RLTrainer
-from forge.cli.config import parse
 from forge.controller.actor import ForgeActor
 from forge.controller.provisioner import init_provisioner, shutdown
 from forge.data.rewards import GroundTruthTestReward, ThinkingReward
@@ -48,6 +47,7 @@ from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
 
 from forge.types import LauncherConfig, ProvisionerConfig
+from forge.util.config import parse
 from forge.util.ops import compute_logprobs
 from monarch.actor import endpoint
 from omegaconf import DictConfig
@@ -640,6 +640,8 @@ if __name__ == "__main__":
         """Main entry point for GRPO training."""
         os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
         os.environ["NCCL_TIMEOUT_MS"] = "60000"  # 60 second timeout
+        os.environ["MONARCH_HOSTMESH_V1"] = "1"
+        os.environ["TORCHSTORE_RDMA_ENABLED"] = "1"
         # os.environ["FORGE_DISABLE_METRICS"] = "1"
         asyncio.run(main(cfg))
 
