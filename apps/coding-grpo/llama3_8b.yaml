@@ -2,10 +2,10 @@
 # >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b.yaml
 
 # Global configuration
-group_size: 4  # Reduced for longer sequences to avoid OOM
-batch_size: 2   # Reduced significantly due to 4096 token sequences
-max_req_tokens: 4096  # Increased for coding prompts with examples
-max_res_tokens: 4096  # Increased for longer code generation with thinking
+group_size: 8  # Reduced for longer sequences to avoid OOM
+batch_size: 8   # Reduced significantly due to 2048 token sequences
+max_req_tokens: 2048  # Increased for coding prompts with examples
+max_res_tokens: 2048  # Increased for longer code generation with thinking
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1 # Off by one by default
 
@@ -14,11 +14,11 @@ rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 
 
 # Observability configuration
+# Observability configuration
 metric_logging:
   wandb:
     entity: torchforge
-    project: "coding-grpo-training"
-    group: "coding_grpo_exp_${oc.env:USER}"
+    project: "kaiwu-coding-grpo"
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
@@ -38,15 +38,14 @@ policy:
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: false
-    gpu_memory_utilization: 0.85
-    max_model_len: 8192
+    gpu_memory_utilization: 0.9
+    max_model_len: 4096
     enable_chunked_prefill: true
-    max_num_batched_tokens: 8192
-    max_num_seqs: 24
+    max_num_seqs: 64
   sampling_params:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/sampling_params.html#vllm.sampling_params.SamplingParams
     n: ${group_size}
     max_tokens: ${max_res_tokens}
-    temperature: 0.6
+    temperature: 1
     top_p: 0.95
 
 # Trainer configuration
@@ -63,9 +62,9 @@ trainer:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
-    seq_len: 8192
+    seq_len: 2048
     max_norm: 0.5
-    steps: 2500
+    steps: 2735
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -80,11 +79,11 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "checkpoint_llama3_8b"
+    folder: "checkpoint_llama3_8b_hard"
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 250
+    interval: 100
     async_mode: "disabled"
   activation_checkpoint:
     mode: selective

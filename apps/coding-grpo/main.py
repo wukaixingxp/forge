@@ -289,82 +289,55 @@ def function_name(parameters):
 Provide the final, working solution. Focus on correctness, readability, and efficiency."""
 
         def transform_sample(sample):
-            # Handle different dataset formats
-            if self.path == "TIGER-Lab/AceCode-87K":
-                # AceCode format with OSS filtering
-                if (
-                    sample.get("source") != "oss"
-                    or not sample.get("test_cases")
-                    or not isinstance(sample.get("test_cases"), list)
-                    or len(sample.get("test_cases", [])) == 0
-                ):
-                    return None
+            # AceCode format with OSS filtering
+            if (
+                sample.get("source") != "oss"
+                or not sample.get("test_cases")
+                or not isinstance(sample.get("test_cases"), list)
+                or len(sample.get("test_cases", [])) == 0
+            ):
+                return None
 
-                system_prompt = get_coding_system_prompt()
-                request: str = sample.get("question", sample.get("prompt", ""))
-                as_chat = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request},
-                ]
-                formatted_request = self._tokenizer.apply_chat_template(
-                    as_chat,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    # enable_thinking=True,
-                )
-                test_cases = sample.get("test_cases", [])
-                return {
-                    "request": formatted_request,
-                    "target": test_cases,  # Use test cases as target for reward function
-                    "task_id": sample.get("id", ""),
-                    "source": sample.get("source"),
-                    "difficulty": sample.get("difficulty", "unknown"),
-                }
-            else:
-                # Generic format - try to handle most common structures
-                question_key = None
-                answer_key = None
+            system_prompt = get_coding_system_prompt()
+            request: str = sample.get("question", sample.get("prompt", ""))
+            as_chat = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": request},
+            ]
+            formatted_request = self._tokenizer.apply_chat_template(
+                as_chat,
+                tokenize=False,
+                add_generation_prompt=True,
+                # enable_thinking=True,
+            )
+            test_cases = sample.get("test_cases", [])
+            return {
+                "request": formatted_request,
+                "target": test_cases,  # Use test cases as target for reward function
+                "task_id": sample.get("id", ""),
+                "source": sample.get("source"),
+                "difficulty": sample.get("difficulty", "unknown"),
+            }
 
-                # Try common question field names
-                for key in ["question", "prompt", "input", "problem"]:
-                    if sample.get(key):
-                        question_key = key
-                        break
+        # Check if path is a local file
+        import os
 
-                # Try common answer field names
-                for key in ["answer", "target", "solution", "output"]:
-                    if sample.get(key):
-                        answer_key = key
-                        break
-
-                if not question_key or not answer_key:
-                    return None
-
-                system_prompt = get_coding_system_prompt()
-                request: str = sample[question_key]
-                as_chat = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request},
-                ]
-                formatted_request = self._tokenizer.apply_chat_template(
-                    as_chat,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-                return {
-                    "request": formatted_request,
-                    "target": sample[answer_key],
-                    "task_id": str(hash(sample[question_key])),  # Generate task ID
-                    "source": "unknown",
-                    "difficulty": "unknown",
-                }
-
-        ds = load_dataset(
-            self.path,
-            split=self.data_split,
-            streaming=self.streaming,
-            revision=self.revision,
-        )
+        if os.path.isfile(self.path) and self.path.endswith(".json"):
+            # Load local JSON file
+            ds = load_dataset(
+                "json",
+                data_files=self.path,
+                split=self.data_split,
+                streaming=self.streaming,
+            )
+        else:
+            # Load from HuggingFace Hub or directory
+            ds = load_dataset(
+                self.path,
+                split=self.data_split,
+                streaming=self.streaming,
+                revision=self.revision,
+            )
         # Filter and transform to coding format
         ds = ds.filter(lambda x: transform_sample(x) is not None)
         ds = ds.map(transform_sample)

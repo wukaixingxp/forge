@@ -2,10 +2,10 @@
 # >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b_hard.yaml
 
 # Global configuration
-group_size: 4  # Reduced for longer sequences to avoid OOM
-batch_size: 2   # Reduced significantly due to 4096 token sequences
-max_req_tokens: 4096  # Increased for coding prompts with examples
-max_res_tokens: 4096  # Increased for longer code generation with thinking
+group_size: 8  # Reduced for longer sequences to avoid OOM
+batch_size: 8   # Reduced significantly due to 2048 token sequences
+max_req_tokens: 1024  # Increased for coding prompts with examples
+max_res_tokens: 2048  # Increased for longer code generation with thinking
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1 # Off by one by default
 
@@ -14,17 +14,18 @@ rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 
 
 # Observability configuration
+# Observability configuration
 metric_logging:
   wandb:
-    project: "coding-grpo-training"
-    group: "coding_grpo_exp_${oc.env:USER}"
+    entity: torchforge
+    project: "kaiwu-coding-grpo"
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
 
 # Dataset configuration
 dataset:
-  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/data/acecode_87K/acecode_87K.json_hard"
+  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/data/acecode_87K/acecode_87K.json"
   revision: "main"
   data_split: "train"
   streaming: false
@@ -62,9 +63,9 @@ trainer:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
-    seq_len: 8192
+    seq_len: 3072
     max_norm: 0.5
-    steps: 2500
+    steps: 23000
     dtype: bfloat16
     gc_freq: 1
   compile:

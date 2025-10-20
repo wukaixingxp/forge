@@ -17,8 +17,7 @@ rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 metric_logging:
   wandb:
     entity: torchforge
-    project: "coding-grpo-training"
-    group: "coding_grpo_exp_${oc.env:USER}"
+    project: "kaiwu-coding-grpo"
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
