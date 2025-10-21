@@ -19,7 +19,7 @@ metric_logging:
     project: "kaiwu-coding-grpo"
     reduce_across_ranks: True
   console:
-    reduce_across_ranks: True
+    logging_mode: global_reduce
 
 # Dataset configuration
 dataset:
