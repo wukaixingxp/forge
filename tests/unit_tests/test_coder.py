@@ -123,7 +123,7 @@ async def test_coder_success():
         await coder.setup.call_one()
         result, _ = await coder.execute.call_one(code="print('Hello World')")
         assert result == "Hello World\n"
-        
+
         # Verify proper sequence of podman commands
         calls = [str(call[0][0]) for call in mock_run.call_args_list]
         # Should have image exists check, pull, rm, create, start, cp, exec
@@ -180,13 +180,13 @@ async def test_coder_recreate():
     """Test container recreation."""
     async with create_mock_coder() as (coder, mock_run):
         await coder.setup.call_one()
-        
+
         # Reset mock to count new calls
         mock_run.reset_mock()
-        
+
         # Recreate the container
         await coder.recreate.call_one()
-        
+
         # Should remove, create, and start a new container
         calls = [str(call[0][0]) for call in mock_run.call_args_list]
         assert any("rm" in call for call in calls)
@@ -200,5 +200,7 @@ async def test_coder_execute_without_setup():
     """Test execution without setup raises error."""
     async with create_mock_coder() as (coder, _):
         # Try to execute without setup
-        with pytest.raises(Exception, match="Container not initialized\\. Call recreate\\(\\) first\\."):
+        with pytest.raises(
+            Exception, match="Container not initialized\\. Call recreate\\(\\) first\\."
+        ):
             await coder.execute.call_one(code="print('Hello')")

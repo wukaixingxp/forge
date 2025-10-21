@@ -281,7 +281,7 @@ Format your response as:
 
 ```python
 def function_name(parameters):
-    \"\"\"Comprehensive docstring explaining the function.\"\"\"     
+    \"\"\"Comprehensive docstring explaining the function.\"\"\"
     # Implementation
     pass
 ```
