@@ -13,11 +13,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 
 import torch
-
-from forge.controller import ForgeActor
-from forge.observability.metrics import record_metric, Reduce
-from forge.observability.perf_tracker import Tracer
-from forge.util.ops import compute_logprobs
 from monarch.actor import current_rank, current_size, endpoint
 from torch.distributed.tensor import DTensor
 
@@ -31,6 +26,11 @@ from torchtitan.config.job_config import (
 )
 from torchtitan.experiments.forge.engine import ForgeEngine
 from torchtitan.experiments.forge.job_config import ForgeJobConfig
+
+from forge.controller import ForgeActor
+from forge.observability.metrics import record_metric, Reduce
+from forge.observability.perf_tracker import Tracer
+from forge.util.ops import compute_logprobs
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -82,7 +82,9 @@ class ReferenceModel(ForgeActor):
 
     def __post_init__(self):
         """Initializes config types and env variables."""
+        print("[ReferenceModel] __post_init__ started")
         super().__init__()
+        print("[ReferenceModel] super().__init__() completed")
 
         # Instantiate dict fields
         for f in fields(self):
@@ -93,10 +95,12 @@ class ReferenceModel(ForgeActor):
                 raise TypeError(
                     f"{f.name} should be a {f.type} type or a dict like object"
                 )
+        print("[ReferenceModel] dict fields instantiated")
 
         self.step = 0
         self.rank = current_rank().rank
         self.size = math.prod(current_size().values())
+        print(f"[ReferenceModel] rank={self.rank}, size={self.size}, step={self.step}")
 
         env = {
             "RANK": str(self.rank),
@@ -111,54 +115,28 @@ class ReferenceModel(ForgeActor):
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         }
         os.environ.update(env)
+        print("[ReferenceModel] __post_init__ completed")
 
     @endpoint
     async def setup(self):
+        print("[ReferenceModel] setup() started")
         engine_config = {f.name: getattr(self, f.name) for f in fields(self)}
+        print("[ReferenceModel] engine_config dict created")
         engine_config = ForgeJobConfig(**engine_config)
+        print("[ReferenceModel] ForgeJobConfig instantiated")
         engine_config.checkpoint.folder = (
             ""  # hardcode to empty to force load from initial_load_path
         )
+        print("[ReferenceModel] checkpoint folder set to empty")
+        print("[ReferenceModel] creating ForgeEngine...")
         self.engine = ForgeEngine(engine_config)
+        print("[ReferenceModel] ForgeEngine created, loading checkpoint...")
         self.engine.checkpointer.load()
+        print("[ReferenceModel] checkpoint loaded")
         self.model = self.engine.model_parts[0]  # No pipeline parallelism yet
-
-        # Reinitialize freqs_cis after checkpoint loading to ensure correct dimensions
-        # This is necessary because HF checkpoints may have incompatible freqs_cis dimensions
-        if hasattr(self.model, "freqs_cis"):
-            old_freqs_cis_len = self.model.freqs_cis.shape[0]
-            logger.info(
-                f"Original freqs_cis length from checkpoint: {old_freqs_cis_len}"
-            )
-
-            # Update model_args.max_seq_len to match the training sequence length
-            # This ensures precomputed freqs_cis has sufficient length
-            if hasattr(self.model, "model_args") and hasattr(
-                self.model.model_args, "max_seq_len"
-            ):
-                # Use the sequence length from training config, or default to current max_seq_len
-                target_seq_len = getattr(
-                    self.training, "seq_len", self.model.model_args.max_seq_len
-                )
-                old_max_seq_len = self.model.model_args.max_seq_len
-                logger.info(
-                    f"Updating max_seq_len from {old_max_seq_len} to {target_seq_len}"
-                )
-                self.model.model_args.max_seq_len = target_seq_len
-                self.model.freqs_cis = self.model._precompute_freqs_cis()
-                self.model.freqs_cis = self.model.freqs_cis.to(
-                    next(self.model.parameters()).device
-                )
-                new_freqs_cis_len = self.model.freqs_cis.shape[0]
-                logger.info(
-                    f"New freqs_cis length after recompute: {new_freqs_cis_len}"
-                )
-            else:
-                logger.warning(
-                    "Model does not have model_args or max_seq_len attribute, cannot update freqs_cis"
-                )
-
+        print("[ReferenceModel] model extracted from engine")
         self.model.eval()
+        print("[ReferenceModel] model set to eval mode, setup() completed")
 
     @endpoint
     async def forward(
@@ -178,22 +156,36 @@ class ReferenceModel(ForgeActor):
               This only includes probabilities for the request tokens, significantly reducing memory
               usage and transfer overhead.
         """
+        print(
+            f"[ReferenceModel] forward() started - step={self.step}, input_shape={input_ids.shape}, max_req_tokens={max_req_tokens}, return_logprobs={return_logprobs}"
+        )
         # Record reference model metrics
+        print("[ReferenceModel] recording metrics...")
         record_metric("reference_perf/forward/count_forward_passes", 1, Reduce.SUM)
         record_metric(
             "reference_perf/forward/avg_sequence_length",
             input_ids.shape[1],
             Reduce.MEAN,
         )
+        print("[ReferenceModel] metrics recorded")
 
+        print("[ReferenceModel] creating tracer...")
         t = Tracer("reference_perf/forward", timer="gpu", track_memory=True)
         t.start()
+        print("[ReferenceModel] tracer started, running GC...")
         self.engine.gc_handler.run(self.step)
+        print("[ReferenceModel] GC completed")
         t.step("garbage_collection")
 
+        print("[ReferenceModel] extracting model_parts and parallel_dims...")
         model_parts = self.engine.model_parts
         parallel_dims = self.engine.parallel_dims
+        print(
+            f"[ReferenceModel] model_parts count={len(model_parts)}, pp_enabled={parallel_dims.pp_enabled}"
+        )
+        print("[ReferenceModel] moving input_ids to cuda...")
         input_ids = input_ids.to("cuda")
+        print("[ReferenceModel] input_ids moved to cuda")
         t.step("to_device")
         # optional_context_parallel_ctx = (
         #     dist_utils.create_context_parallel_ctx(
@@ -207,24 +199,46 @@ class ReferenceModel(ForgeActor):
         #     else None
         # )
         optional_context_parallel_ctx = None
+        print("[ReferenceModel] checking PP enabled...")
         if self.engine.parallel_dims.pp_enabled:
             raise NotImplementedError("PP not implemented yet")
         else:
-            # (jackkhuu) Not sure if either context are needed for inference here
+            print("[ReferenceModel] entering train_context...")
             with self.engine.train_context(optional_context_parallel_ctx):
+                print("[ReferenceModel] entering maybe_enable_amp...")
                 with self.engine.maybe_enable_amp:
+                    print("[ReferenceModel] entering inference_mode...")
                     with torch.inference_mode():
+                        print("[ReferenceModel] calling model forward pass...")
                         logits = self.model(input_ids)
+                        print(
+                            f"[ReferenceModel] model forward completed, logits shape={logits.shape if hasattr(logits, 'shape') else 'N/A'}"
+                        )
+        print("[ReferenceModel] incrementing step counter...")
         self.step += 1
+        print("[ReferenceModel] checking if logits is DTensor...")
         if isinstance(logits, DTensor):
+            print("[ReferenceModel] converting DTensor to full tensor...")
             logits = logits.full_tensor()
+            print("[ReferenceModel] DTensor conversion completed")
         t.step("forward")
+        print("[ReferenceModel] forward pass tracer step recorded")
 
         if not return_logprobs:
+            print("[ReferenceModel] return_logprobs=False, returning logits directly")
             t.stop()
+            print("[ReferenceModel] tracer stopped, forward() completed")
             return logits
         else:
+            print("[ReferenceModel] return_logprobs=True, computing logprobs...")
             logprobs = compute_logprobs(logits, input_ids[:, max_req_tokens:])
+            print(
+                f"[ReferenceModel] logprobs computed, shape={logprobs.shape if hasattr(logprobs, 'shape') else 'N/A'}"
+            )
             t.step("compute_logprobs")
+            print("[ReferenceModel] stopping tracer...")
             t.stop()
+            print(
+                "[ReferenceModel] tracer stopped, forward() completed, returning logprobs"
+            )
             return logprobs

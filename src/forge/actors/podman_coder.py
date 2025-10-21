@@ -13,9 +13,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from forge.controller import ForgeActor
-
 from monarch.actor import endpoint
+
+from forge.controller import ForgeActor
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -232,7 +232,7 @@ class PodmanPythonCoder(ForgeActor):
                     f"Failed to copy script to container: {copy_result.stderr}"
                 )
 
-            # Execute the code inside the container with 300 second timeout and retry logic
+            # Execute the code inside the container with 30 second timeout and retry logic
             try:
                 result = self._run_subprocess_with_retry(
                     [
@@ -243,16 +243,16 @@ class PodmanPythonCoder(ForgeActor):
                         container_script_path,
                     ],
                     max_retries=3,
-                    timeout=300,
+                    timeout=30,
                 )
                 output = result.stdout
                 error = result.stderr
             except subprocess.TimeoutExpired:
                 logging.warning(
-                    f"Code execution timed out after 300 seconds (execution_id={execution_id})"
+                    f"Code execution timed out after 30 seconds (execution_id={execution_id})"
                 )
                 output = ""
-                error = "Error: Code execution timed out after 300 seconds (possible infinite loop)"
+                error = "Error: Code execution timed out after 30 seconds (possible infinite loop)"
             finally:
                 # Clean up the script file from container to avoid clutter
                 # Use check=False to not fail if file doesn't exist

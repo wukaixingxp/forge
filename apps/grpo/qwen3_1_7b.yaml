@@ -16,8 +16,7 @@ rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 # Observability configuration
 metric_logging:
   wandb:
-    project: "grpo-training"
-    group: "grpo_exp_${oc.env:USER}"
+    project: "kaiwu-coding-grpo"
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
