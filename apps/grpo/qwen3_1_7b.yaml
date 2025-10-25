@@ -16,8 +16,9 @@ rollout_threads: 1   # Recommended to set equal to policy.num_replicas
 # Observability configuration
 metric_logging:
   wandb:
+    entity: "torchforge"
     project: "kaiwu-coding-grpo"
-    reduce_across_ranks: True
+    logging_mode: global_reduce
   console:
     logging_mode: global_reduce
 
