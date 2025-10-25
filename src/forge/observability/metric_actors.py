@@ -82,6 +82,7 @@ async def get_or_create_metric_logger(
         # Shutdown
         await mlogger.shutdown.call_one()
     """
+
     # Get or create the singleton global logger
     global _global_logger
 
@@ -224,8 +225,16 @@ class GlobalLoggingActor(ForgeActor):
                 f"{', '.join([mode.value for mode in LoggingMode])}."
             )
 
-        mode_str = config["logging_mode"]
-        mode = LoggingMode(mode_str)
+        # Convert string to LoggingMode enum
+        mode_value = config["logging_mode"]
+        if isinstance(mode_value, str):
+            mode = LoggingMode(mode_value)
+        elif isinstance(mode_value, LoggingMode):
+            mode = mode_value
+        else:
+            raise TypeError(
+                f"logging_mode must be str or LoggingMode enum, got {type(mode_value)}"
+            )
 
         # Validate per_rank_share_run configuration
         share_run = config.get("per_rank_share_run", False)
@@ -302,7 +311,7 @@ class GlobalLoggingActor(ForgeActor):
             mode = backend_config["logging_mode"]
 
             backend: LoggerBackend = get_logger_backend_class(backend_name)(
-                backend_config
+                **backend_config
             )
             await backend.init(role=BackendRole.GLOBAL, process_name="global_reduce")
 
