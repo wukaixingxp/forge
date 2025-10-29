@@ -18,6 +18,7 @@ metric_logging:
     reduce_across_ranks: True
   console:
     reduce_across_ranks: True
+    log_per_rank: True  # Enable per-rank logging to see actor-specific logs
 
 # Dataset configuration
 dataset:

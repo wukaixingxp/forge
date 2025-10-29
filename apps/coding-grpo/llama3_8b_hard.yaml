@@ -3,7 +3,7 @@
 
 # Global configuration
 group_size: 8  # Reduced for longer sequences to avoid OOM
-batch_size: 8   # Reduced significantly due to 2048 token sequences
+batch_size: 8   # Reduced to 8 to avoid OOM with seq_len=3072
 max_req_tokens: 1024  # Increased for coding prompts with examples
 max_res_tokens: 2048  # Increased for longer code generation with thinking
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
@@ -22,10 +22,13 @@ metric_logging:
     logging_mode: global_reduce
   console:
     logging_mode: global_reduce
+    log_per_rank: True  # Enable per-rank logging to see actor-specific logs
+
 
 # Dataset configuration
 dataset:
-  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/data/acecode_87K/acecode_87K.json"
+  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/scripts/data/acecode_89k/acecode_hard01.json"
+  #path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/data/acecode_87K/acecode_87K.json"
   revision: "main"
   data_split: "train"
   streaming: false
@@ -38,16 +41,16 @@ policy:
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: false
-    gpu_memory_utilization: 0.85
+    gpu_memory_utilization: 0.75  # Reduced from 0.85 to leave more memory for trainer
     max_model_len: 8192
     enable_chunked_prefill: true
     max_num_batched_tokens: 8192
-    max_num_seqs: 24
+    max_num_seqs: 16  # Reduced from 24 to reduce memory pressure
   sampling_params:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/sampling_params.html#vllm.sampling_params.SamplingParams
     n: ${group_size}
     max_tokens: ${max_res_tokens}
-    temperature: 0.6
-    top_p: 0.95
+    temperature: 1.0  # ✅ FIXED: Increased to 1.0 for maximum exploration during RL training
+    top_p: 1.0
 
 # Trainer configuration
 trainer:
@@ -57,15 +60,15 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 5e-7
+    lr: 1e-5
     eps: 1e-8
   lr_scheduler:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
     seq_len: 3072
-    max_norm: 0.5
-    steps: 23000
+    max_norm: 1.0  # ✅ FIXED: Increased from 0.5 to 1.0 for more aggressive gradient clipping
+    steps: 500
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -84,7 +87,7 @@ trainer:
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 250
+    interval: 100
     async_mode: "disabled"
   activation_checkpoint:
     mode: selective
