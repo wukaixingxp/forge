@@ -2,7 +2,7 @@
 # >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b_hard.yaml
 
 # Global configuration
-group_size: 16  # ✅ INCREASED from 8 to 16 for better reward diversity and learning signal
+group_size: 32  # ✅ INCREASED from 16 to 32 for better reward diversity and learning signal on hard dataset
 batch_size: 8   # Reduced to 8 to avoid OOM with seq_len=3072
 max_req_tokens: 1024  # Increased for coding prompts with examples
 max_res_tokens: 2048  # Increased for longer code generation with thinking
@@ -60,13 +60,14 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 5e-5  # ✅ INCREASED from 7e-6 to 5e-5 for faster learning with RL
+    lr: 5e-6  # ✅ REDUCED from 5e-5 to 5e-6 to prevent rapid policy divergence and reward collapse
     eps: 1e-8  # ✅ FIXED: Changed from 1e-9 to 1e-8 for better numerical stability
+  lr_scheduler:
     warmup_steps: 1
   training:
     local_batch_size: ${batch_size}
     seq_len: 3072
-    max_norm: 1.0  # ✅ FIXED: Increased from 0.5 to 1.0 for more aggressive gradient clipping
+    max_norm: 0.5  # ✅ REDUCED from 1.0 to 0.5 for tighter gradient clipping to prevent policy divergence
     steps: 500
     dtype: bfloat16
     gc_freq: 1

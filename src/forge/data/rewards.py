@@ -162,11 +162,11 @@ class GroundTruthTestReward:
 
             if not self.coder_actor:
                 logger.info("No coder_actor available - Reward: 0.0")
-                return 0.0
+                return reward
 
             if not test_cases:
                 logger.info("No test cases provided - Reward: 0.0")
-                return 0.0
+                return reward
 
             raw_content = response
             logger.info("=" * 80)
@@ -181,12 +181,13 @@ class GroundTruthTestReward:
             if not code:
                 logger.info("No code extracted - Reward: -1.0")
                 return -1
-
+            reward += 0.1
             logger.info(f"✓ Code extracted - Reward: {reward:.3f}")
 
             # First, check if code is syntactically valid
             try:
                 compile(code, "<string>", "exec")
+                reward += 0.1
                 # Milestone 2: Code is syntactically valid
             except SyntaxError as e:
                 reward = -0.5

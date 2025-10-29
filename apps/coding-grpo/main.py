@@ -168,7 +168,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.05,  # ✅ INCREASED: From 0.01 to 0.05 for better KL regularization
+    beta: float = 0.1,  # ✅ INCREASED: From 0.05 to 0.1 for stronger KL regularization to prevent policy divergence
 ) -> torch.Tensor:
     """
     GRPO Loss Function for on-policy samples with numerical stability improvements
