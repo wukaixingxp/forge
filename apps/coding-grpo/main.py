@@ -300,48 +300,72 @@ class ComputeAdvantages(ForgeActor):
 
     @endpoint
     async def compute(self, group: Group) -> list[float]:
-        rewards = torch.tensor([[e.reward for e in group]], dtype=torch.float32)
+        # ✅ Get RAW rewards as 1D tensor [group_size]
+        raw_rewards = torch.tensor([e.reward for e in group], dtype=torch.float32)
 
-        # ✅ Enhanced logging for raw rewards
-        record_metric("rewards/raw_mean", rewards.mean().item(), Reduce.MEAN)
-        record_metric("rewards/raw_std", rewards.std().item(), Reduce.MEAN)
-        record_metric("rewards/raw_min", rewards.min().item(), Reduce.MEAN)
-        record_metric("rewards/raw_max", rewards.max().item(), Reduce.MEAN)
+        # ✅ CRITICAL: Log group size to verify it's large enough
+        group_size = len(group)
+        record_metric("advantages/group_size", group_size, Reduce.MEAN)
+
+        # Log raw reward statistics BEFORE any processing
+        record_metric("rewards/raw_mean", raw_rewards.mean().item(), Reduce.MEAN)
+        record_metric("rewards/raw_std", raw_rewards.std().item(), Reduce.MEAN)
+        record_metric("rewards/raw_min", raw_rewards.min().item(), Reduce.MEAN)
+        record_metric("rewards/raw_max", raw_rewards.max().item(), Reduce.MEAN)
+
+        # ✅ WARN if std is too low (insufficient diversity)
+        if raw_rewards.std().item() < 0.15:
+            print(
+                f"WARNING: Low reward variance (std={raw_rewards.std().item():.4f}) in group of size {group_size}"
+            )
+            print(f"         Rewards: {raw_rewards.tolist()}")
+            print(
+                f"         Consider increasing group_size for better learning signal!"
+            )
 
         # Check for NaN/Inf in rewards
-        if torch.isnan(rewards).any() or torch.isinf(rewards).any():
-            print(f"WARNING: NaN/Inf detected in rewards: {rewards}")
-            rewards = torch.nan_to_num(rewards, nan=0.0, posinf=1.0, neginf=0.0)
+        if torch.isnan(raw_rewards).any() or torch.isinf(raw_rewards).any():
+            print(f"WARNING: NaN/Inf detected in rewards: {raw_rewards}")
+            raw_rewards = torch.nan_to_num(raw_rewards, nan=0.0, posinf=1.0, neginf=0.0)
 
-        # ✅ Improved normalization strategy
-        mean = rewards.mean(1, keepdim=True)
-        std = rewards.std(1, keepdim=True, unbiased=False)
+        # ✅ Compute normalization statistics
+        mean = raw_rewards.mean()
+        std = raw_rewards.std(unbiased=False)
 
-        # ✅ Use adaptive minimum std based on reward scale
-        min_std = max(0.01, rewards.abs().mean().item() * 0.1)
-        std = torch.clamp(std, min=min_std)
+        # Log normalization parameters BEFORE normalization
+        record_metric("advantages/normalization_mean_before", mean.item(), Reduce.MEAN)
+        record_metric("advantages/normalization_std_before", std.item(), Reduce.MEAN)
 
-        # ✅ Normalize advantages
-        advantages = (rewards - mean) / std
+        # ✅ Prevent division by very small std
+        # Use max(0.01, std) to preserve signal when std is reasonable
+        if std < 0.01:
+            print(f"WARNING: Very low std ({std.item():.6f}), using minimum 0.01")
+            std = torch.tensor(0.01)
 
-        # ✅ More reasonable clipping range for advantages
-        # Increased from [-2, 2] to [-5, 5] to allow more signal
-        advantages = torch.clamp(advantages, min=-5.0, max=5.0)
+        # ✅ Normalize advantages (mean should be ~0 after this)
+        advantages = (raw_rewards - mean) / std
+
+        # ✅ RELAXED CLIPPING - allow more signal through!
+        # Only clip extreme outliers to prevent instability
+        advantages = torch.clamp(advantages, min=-10.0, max=10.0)
 
         # Check for NaN/Inf in advantages
         if torch.isnan(advantages).any() or torch.isinf(advantages).any():
             print(f"WARNING: NaN/Inf detected in advantages: {advantages}")
             advantages = torch.nan_to_num(advantages, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # ✅ Enhanced logging for debugging
-        record_metric("advantages/mean", advantages.mean().item(), Reduce.MEAN)
-        record_metric("advantages/std", advantages.std().item(), Reduce.MEAN)
-        record_metric("advantages/min", advantages.min().item(), Reduce.MEAN)
-        record_metric("advantages/max", advantages.max().item(), Reduce.MEAN)
-        record_metric("advantages/normalization_std", std.item(), Reduce.MEAN)
-        record_metric("advantages/normalization_mean", mean.item(), Reduce.MEAN)
+        # ✅ Log final advantage statistics (mean should be ~0!)
+        record_metric("advantages/mean_after", advantages.mean().item(), Reduce.MEAN)
+        record_metric("advantages/std_after", advantages.std().item(), Reduce.MEAN)
+        record_metric("advantages/min_after", advantages.min().item(), Reduce.MEAN)
+        record_metric("advantages/max_after", advantages.max().item(), Reduce.MEAN)
+        record_metric(
+            "advantages/range_after",
+            (advantages.max() - advantages.min()).item(),
+            Reduce.MEAN,
+        )
 
-        return advantages.squeeze(0).tolist()
+        return advantages.tolist()
 
 
 @dataclass
