@@ -10,11 +10,25 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
+from sys import exit
 from typing import Callable
 
 import torch
 import torch.distributed.checkpoint as dcp
 import torchstore as ts
+
+from forge.actors._torchstore_utils import (
+    DcpHandle,
+    get_dcp_whole_state_dict_key,
+    get_param_key,
+    rdma_available,
+)
+
+from forge.controller import ForgeActor
+from forge.data.utils import batch_to_device
+from forge.env import TORCHSTORE_USE_RDMA
+from forge.observability.metrics import record_metric, Reduce
+from forge.observability.perf_tracker import Tracer
 
 from monarch.actor import current_rank, current_size, endpoint
 from torch import Tensor
@@ -35,19 +49,6 @@ from torchtitan.config.job_config import (
 )
 from torchtitan.experiments.forge.engine import ForgeEngine
 from torchtitan.experiments.forge.job_config import ForgeJobConfig
-
-from forge.actors._torchstore_utils import (
-    DcpHandle,
-    get_dcp_whole_state_dict_key,
-    get_param_key,
-    rdma_available,
-)
-
-from forge.controller import ForgeActor
-from forge.data.utils import batch_to_device
-from forge.env import TORCHSTORE_USE_RDMA
-from forge.observability.metrics import record_metric, Reduce
-from forge.observability.perf_tracker import Tracer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -188,11 +189,14 @@ class RLTrainer(ForgeActor):
 
         t.step("forward_backward")
 
-        current_lr = (
-            self.engine.lr_schedulers.get_last_lr()[0]
-            if hasattr(self.engine.lr_schedulers, "get_last_lr")
-            else 0.001
-        )
+        # Get actual learning rate from optimizer's param groups
+        if self.engine.lr_schedulers.schedulers[0] and hasattr(
+            self.engine.lr_schedulers.schedulers[0], "get_last_lr"
+        ):
+            current_lr = self.engine.lr_schedulers.schedulers[0].get_last_lr()[0]
+        else:
+            # Fallback: get LR directly from optimizer's param groups
+            current_lr = self.engine.optimizers.param_groups[0]["lr"]
         record_metric("rl_trainer/learning_rate", current_lr, Reduce.MIN)
 
         self.engine.optimizers.step()

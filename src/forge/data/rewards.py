@@ -9,6 +9,19 @@ import re
 import traceback
 from typing import Any, Coroutine, Optional
 
+logger = logging.getLogger(__name__)
+
+# Add file handler to capture logs from actor processes
+_file_handler = logging.FileHandler(
+    "/home/kaiwu/work/kaiwu/forge/reward_actor.log", mode="a"
+)
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+logger.addHandler(_file_handler)
+logger.setLevel(logging.INFO)
+
 
 class MathReward:
     """Reward class for evaluating math correctness."""
@@ -108,19 +121,27 @@ def extract_python_code(text: str) -> Optional[str]:
     for pattern in patterns:
         match = re.search(pattern, text, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            code = match.group(1).strip()
+            # Return the code if it's non-empty
+            if code:
+                return code
 
-    return text.strip()
+    # Check if the text contains only markdown markers without actual code
+    stripped = text.strip()
+    # If text is empty or consists only of markdown code fence markers, return None
+    if not stripped or re.match(r"^```(?:python|py)?\s*$", stripped):
+        return None
+
+    return stripped
 
 
-class GroundTruthTestReward(Reward):
+class GroundTruthTestReward:
     """Reward class for evaluating code against ground truth test cases using sandboxed execution.
 
-    Uses a dense reward structure (0.0 to 1.0) with progressive milestones:
-    - 0.05: Code extracted from response
-    - 0.10: Code is syntactically valid
-    - 0.15: Code executes without immediate crash
-    - 0.70: Scaled by test success rate (0-100%)
+    Uses a dense reward structure (-1 to 1.0) with progressive milestones:
+    - -1 : Code extracted failed
+    - -0.5: Code extracted failed to compile
+    - 1: Scaled by test success rate (0-100%)
 
     Total possible reward: 1.0
     """
@@ -158,20 +179,17 @@ class GroundTruthTestReward(Reward):
             code = extract_python_code(text)
 
             if not code:
-                logger.info("No code extracted - Reward: 0.0")
-                return 0.0
+                logger.info("No code extracted - Reward: -1.0")
+                return -1
 
-            # Milestone 1: Code extracted successfully
-            reward += 0.05
             logger.info(f"✓ Code extracted - Reward: {reward:.3f}")
 
             # First, check if code is syntactically valid
             try:
                 compile(code, "<string>", "exec")
                 # Milestone 2: Code is syntactically valid
-                reward += 0.10
-                logger.info(f"✓ Syntax valid - Reward: {reward:.3f}")
             except SyntaxError as e:
+                reward = -0.5
                 logger.info(f"✗ Syntax error: {e} - Final Reward: {reward:.3f}")
                 return reward
 
@@ -248,7 +266,6 @@ if failed_tests:
                 # Check if code executed without immediate crash (got to test execution stage)
                 if output and ("PASSED:" in output or "Test " in output):
                     # Milestone 3: Code executed without immediate crash
-                    reward += 0.15
                     logger.info(f"✓ Code executed - Reward: {reward:.3f}")
 
                     # Parse results from output
@@ -270,7 +287,7 @@ if failed_tests:
                     success_rate = passed / total if total > 0 else 0.0
 
                     # Milestone 4: Test success (scaled by success rate)
-                    test_reward = 0.70 * success_rate
+                    test_reward = success_rate
                     reward += test_reward
 
                     logger.info(
