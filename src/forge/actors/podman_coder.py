@@ -212,65 +212,135 @@ class PodmanPythonCoder(ForgeActor):
 
         logging.debug(f"Executing code in thread pool (execution_id={execution_id})")
 
-        # Write code to a temporary file and copy it into the container
-        with tempfile.TemporaryDirectory() as tmpdir:
-            code_path = Path(tmpdir) / script_name
-            code_path.write_text(code)
-
-            # Copy the script into the container with retry logic
-            copy_result = self._run_subprocess_with_retry(
-                [
-                    "podman",
-                    "cp",
-                    str(code_path),
-                    f"{self.container_name}:{container_script_path}",
-                ],
-                max_retries=3,
-            )
-            if copy_result.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to copy script to container: {copy_result.stderr}"
-                )
-
-            # Execute the code inside the container with 30 second timeout and retry logic
+        max_retries = 2
+        for attempt in range(max_retries):
             try:
-                result = self._run_subprocess_with_retry(
-                    [
-                        "podman",
-                        "exec",
-                        self.container_name,
-                        "python3",
-                        container_script_path,
-                    ],
-                    max_retries=3,
-                    timeout=30,
-                )
-                output = result.stdout
-                error = result.stderr
-            except subprocess.TimeoutExpired:
-                logging.warning(
-                    f"Code execution timed out after 30 seconds (execution_id={execution_id})"
-                )
-                output = ""
-                error = "Error: Code execution timed out after 30 seconds (possible infinite loop)"
-            finally:
-                # Clean up the script file from container to avoid clutter
-                # Use check=False to not fail if file doesn't exist
-                subprocess.run(
-                    [
-                        "podman",
-                        "exec",
-                        self.container_name,
-                        "rm",
-                        "-f",
-                        container_script_path,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
-                )
+                # Write code to a temporary file and copy it into the container
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    code_path = Path(tmpdir) / script_name
+                    code_path.write_text(code)
 
-            return output, error
+                    # Copy the script into the container with retry logic
+                    copy_result = self._run_subprocess_with_retry(
+                        [
+                            "podman",
+                            "cp",
+                            str(code_path),
+                            f"{self.container_name}:{container_script_path}",
+                        ],
+                        max_retries=3,
+                    )
+                    if copy_result.returncode != 0:
+                        error_msg = copy_result.stderr.lower()
+                        # Check for container state errors
+                        if any(
+                            keyword in error_msg
+                            for keyword in [
+                                "container",
+                                "not running",
+                                "state improper",
+                                "no such container",
+                                "exec session",
+                            ]
+                        ):
+                            raise RuntimeError(f"Container error: {copy_result.stderr}")
+                        raise RuntimeError(
+                            f"Failed to copy script to container: {copy_result.stderr}"
+                        )
+
+                    # Execute the code inside the container with 30 second timeout and retry logic
+                    try:
+                        result = self._run_subprocess_with_retry(
+                            [
+                                "podman",
+                                "exec",
+                                self.container_name,
+                                "python3",
+                                container_script_path,
+                            ],
+                            max_retries=3,
+                            timeout=30,
+                        )
+                        output = result.stdout
+                        error = result.stderr
+
+                        # Check for container state errors in stderr
+                        if error and any(
+                            keyword in error.lower()
+                            for keyword in [
+                                "container state improper",
+                                "exec session",
+                                "not running",
+                                "no such container",
+                            ]
+                        ):
+                            raise RuntimeError(f"Container error: {error}")
+
+                    except subprocess.TimeoutExpired:
+                        logging.warning(
+                            f"Code execution timed out after 30 seconds (execution_id={execution_id})"
+                        )
+                        output = ""
+                        error = "Error: Code execution timed out after 30 seconds (possible infinite loop)"
+                    finally:
+                        # Clean up the script file from container to avoid clutter
+                        # Use check=False to not fail if file doesn't exist
+                        subprocess.run(
+                            [
+                                "podman",
+                                "exec",
+                                self.container_name,
+                                "rm",
+                                "-f",
+                                container_script_path,
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=False,
+                        )
+
+                    return output, error
+
+            except RuntimeError as e:
+                error_msg = str(e).lower()
+                # Check for container-related errors
+                if any(
+                    keyword in error_msg
+                    for keyword in [
+                        "container",
+                        "exec session",
+                        "not running",
+                        "state improper",
+                        "no such container",
+                    ]
+                ):
+                    logging.warning(
+                        f"Container error on attempt {attempt + 1}/{max_retries}: {e}"
+                    )
+                    if attempt < max_retries - 1:
+                        logging.info("Attempting to recreate container...")
+                        try:
+                            self._recreate()
+                            logging.info("Container recreated successfully")
+                            continue
+                        except Exception as recreate_error:
+                            logging.error(
+                                f"Failed to recreate container: {recreate_error}"
+                            )
+                            if attempt == max_retries - 1:
+                                raise RuntimeError(
+                                    f"Container failed and could not be recreated: {e}"
+                                ) from e
+                    else:
+                        raise RuntimeError(
+                            f"Container failed after {max_retries} attempts: {e}"
+                        ) from e
+                else:
+                    # Non-container error, propagate immediately
+                    raise
+
+        # Should never reach here, but for type safety
+        raise RuntimeError("Execution failed after all retry attempts")
 
     @endpoint
     async def execute(self, code: str) -> tuple[str, str]:

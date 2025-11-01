@@ -829,18 +829,23 @@ class WandbBackend(LoggerBackend):
     async def _init_global(self, run_name: str | None):
         import wandb
 
-        self.run = wandb.init(name=run_name, **self.backend_kwargs)
+        settings = wandb.Settings(init_timeout=180)
+        self.run = wandb.init(name=run_name, settings=settings, **self.backend_kwargs)
 
     async def _init_per_rank(self, run_name: str):
         import wandb
 
-        self.run = wandb.init(name=run_name, **self.backend_kwargs)
+        settings = wandb.Settings(init_timeout=180)
+        self.run = wandb.init(name=run_name, settings=settings, **self.backend_kwargs)
 
     async def _init_shared_global(self, run_name: str | None):
         import wandb
 
         settings = wandb.Settings(
-            mode="shared", x_primary=True, x_label="controller_primary"
+            mode="shared",
+            x_primary=True,
+            x_label="controller_primary",
+            init_timeout=180,
         )
         self.run = wandb.init(name=run_name, settings=settings, **self.backend_kwargs)
 
@@ -857,7 +862,9 @@ class WandbBackend(LoggerBackend):
 
         service_token.clear_service_in_env()
 
-        settings = wandb.Settings(mode="shared", x_primary=False, x_label=process_name)
+        settings = wandb.Settings(
+            mode="shared", x_primary=False, x_label=process_name, init_timeout=180
+        )
         self.run = wandb.init(
             name=run_name, id=shared_id, settings=settings, **self.backend_kwargs
         )

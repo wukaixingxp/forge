@@ -40,7 +40,10 @@ from forge.actors._torchstore_utils import (
     get_param_prefix,
 )
 from forge.actors.generator import Generator
-from forge.actors.podman_coder import PodmanPythonCoder
+
+# from forge.actors.podman_coder import PodmanPythonCoder
+from forge.actors.openenv_coder import OpenEnvCoder
+
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import RLTrainer
@@ -168,7 +171,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.1,  # ✅ INCREASED: From 0.05 to 0.1 for stronger KL regularization to prevent policy divergence
+    beta: float = 0.001,
 ) -> torch.Tensor:
     """
     GRPO Loss Function for on-policy samples with numerical stability improvements
@@ -522,13 +525,9 @@ async def main(cfg: DictConfig):
     # ---- Setup services ---- #
 
     # Setup coding environment
-    # Use ThreadPoolExecutor to handle concurrent executions without blocking
-    # Reduced to 2 workers to prevent resource exhaustion (each worker spawns 2 subprocesses)
-    coder_actor = await PodmanPythonCoder.as_actor(
-        container_image="python:3.10",
-        container_name="coder_sandbox",
-        max_workers=2,  # Thread pool size for concurrent executions (reduced from 4)
-    )
+    # Default additional_imports: ["sys", "os", "functools", "typing"]
+    # To customize: coder_actor = await OpenEnvCoder.as_actor(additional_imports=["sys", "os", "numpy", "pandas"])
+    coder_actor = await OpenEnvCoder.as_actor()
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
@@ -582,66 +581,93 @@ async def main(cfg: DictConfig):
         rollout_count = 0
         pad_id = await dataloader.pad_token.call_one()
         while not shutdown_event.is_set():
-            t = Tracer("main_perf/continuous_rollouts")
-            t.start()
-            sample = await dataloader.sample.call_one()
-            if sample is None:
-                print("Dataloader is empty, exiting continuous rollout")
-                return
+            try:
+                t = Tracer("main_perf/continuous_rollouts")
+                t.start()
+                sample = await dataloader.sample.call_one()
+                if sample is None:
+                    print("Dataloader is empty, exiting continuous rollout")
+                    return
 
-            t.step("data_loading")
+                t.step("data_loading")
 
-            prompt, target = sample["request"], sample["target"]
-            responses: list[Completion] = await policy.generate.route(prompt)
-            t.step("policy_generation")
+                prompt, target = sample["request"], sample["target"]
+                responses: list[Completion] = await policy.generate.route(prompt)
+                t.step("policy_generation")
 
-            # Construct episodes and calculate rewards
-            episodes = []
-            input_ids = torch.ones(
-                (group_size, max_req_tokens + max_res_tokens),
-                dtype=torch.long,
-            )
-            for i, response in enumerate(responses):
-                episode = Episode(
-                    episode_id=str(uuid.uuid4()),
-                    pad_id=pad_id,
-                    request_len=max_req_tokens,
-                    response_len=max_res_tokens,
-                    target=target,
-                    completion=response,
+                # Construct episodes and calculate rewards
+                episodes = []
+                input_ids = torch.ones(
+                    (group_size, max_req_tokens + max_res_tokens),
+                    dtype=torch.long,
                 )
-                episode.reward = await reward_actor.evaluate_response.route(
-                    prompt=prompt, response=response.text, target=target
+                for i, response in enumerate(responses):
+                    episode = Episode(
+                        episode_id=str(uuid.uuid4()),
+                        pad_id=pad_id,
+                        request_len=max_req_tokens,
+                        response_len=max_res_tokens,
+                        target=target,
+                        completion=response,
+                    )
+                    episode.reward = await reward_actor.evaluate_response.route(
+                        prompt=prompt, response=response.text, target=target
+                    )
+                    episodes.append(episode)
+
+                    # Build input_ids for reference logprobs
+                    input_ids[i, :max_req_tokens] = episode.request_tensor
+                    input_ids[i, max_req_tokens:] = episode.response_tensor
+
+                t.step("reward_evaluation")
+
+                ref_logprobs = await ref_model.forward.route(
+                    input_ids, max_req_tokens, return_logprobs=True
                 )
-                episodes.append(episode)
+                t.step("reference_model_calculate_logprobs")
 
-                # Build input_ids for reference logprobs
-                input_ids[i, :max_req_tokens] = episode.request_tensor
-                input_ids[i, max_req_tokens:] = episode.response_tensor
+                for i, episode in enumerate(episodes):
+                    episode.ref_logprobs = ref_logprobs[i]
+                del ref_logprobs, input_ids
 
-            t.step("reward_evaluation")
+                # Calculate advantages and add to replay buffer
+                advantages = await compute_advantages.compute.call_one(episodes)
+                for episode, advantage in zip(episodes, advantages):
+                    episode.advantage = advantage
+                    await replay_buffer.add.call_one(episode)
 
-            ref_logprobs = await ref_model.forward.route(
-                input_ids, max_req_tokens, return_logprobs=True
-            )
-            t.step("reference_model_calculate_logprobs")
-
-            for i, episode in enumerate(episodes):
-                episode.ref_logprobs = ref_logprobs[i]
-            del ref_logprobs, input_ids
-
-            # Calculate advantages and add to replay buffer
-            advantages = await compute_advantages.compute.call_one(episodes)
-            for episode, advantage in zip(episodes, advantages):
-                episode.advantage = advantage
-                await replay_buffer.add.call_one(episode)
-
-            # Log metrics
-            rollout_count += 1
-            record_metric(
-                "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
-            )
-            t.stop()
+                # Log metrics
+                rollout_count += 1
+                record_metric(
+                    "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
+                )
+                t.stop()
+            except RuntimeError as e:
+                error_msg = str(e).lower()
+                # Check if this is a container-related error that couldn't be recovered
+                if any(
+                    keyword in error_msg
+                    for keyword in [
+                        "container failed",
+                        "could not be recreated",
+                        "execution failed after all retry attempts",
+                    ]
+                ):
+                    print("=" * 80)
+                    print("CRITICAL ERROR: Container recreation failed")
+                    print(f"Error: {e}")
+                    print("Triggering graceful shutdown of training...")
+                    print("=" * 80)
+                    shutdown_event.set()
+                    return
+                else:
+                    # Re-raise non-container errors
+                    raise
+            except Exception as e:
+                print(f"Unexpected error in continuous_rollouts: {e}")
+                print("Triggering graceful shutdown of training...")
+                shutdown_event.set()
+                raise
 
     async def continuous_training():
         training_step = 0

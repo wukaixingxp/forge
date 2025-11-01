@@ -128,38 +128,94 @@ class _SandboxedPythonCoder:
         if not self._initialized:
             raise RuntimeError("Container not initialized. Call recreate() first.")
 
-        # Write code to a temporary file that we can mount
-        with tempfile.TemporaryDirectory() as tmpdir:
-            code_path = Path(tmpdir) / "script.py"
-            code_path.write_text(code)
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Write code to a temporary file that we can mount
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    code_path = Path(tmpdir) / "script.py"
+                    code_path.write_text(code)
 
-            # Run the code inside the container, mounting tmpdir
-            cmd = [
-                "enroot",
-                "start",
-                "--mount",
-                f"{tmpdir}:/work",
-                self.container_name,
-                "python3",
-                "/work/script.py",
-            ]
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            output = result.stdout
-            error = result.stderr
+                    # Run the code inside the container, mounting tmpdir
+                    cmd = [
+                        "enroot",
+                        "start",
+                        "--mount",
+                        f"{tmpdir}:/work",
+                        self.container_name,
+                        "python3",
+                        "/work/script.py",
+                    ]
+                    result = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    output = result.stdout
+                    error = result.stderr
 
-            print("[DEBUG] EXECUTION OUTPUTS:")
-            print("-" * 80)
-            print(f"Return Code: {result.returncode}")
-            print(f"\nSTDOUT:\n{output if output else '(empty)'}")
-            print(f"\nSTDERR:\n{error if error else '(empty)'}")
-            print("=" * 80)
+                    # Check for container state errors in stderr
+                    if error and any(
+                        keyword in error.lower()
+                        for keyword in [
+                            "container state improper",
+                            "exec session",
+                            "not running",
+                            "no such container",
+                        ]
+                    ):
+                        raise RuntimeError(f"Container error: {error}")
 
-            return output, error
+                    print("[DEBUG] EXECUTION OUTPUTS:")
+                    print("-" * 80)
+                    print(f"Return Code: {result.returncode}")
+                    print(f"\nSTDOUT:\n{output if output else '(empty)'}")
+                    print(f"\nSTDERR:\n{error if error else '(empty)'}")
+                    print("=" * 80)
+
+                    return output, error
+
+            except (RuntimeError, subprocess.SubprocessError) as e:
+                error_msg = str(e).lower()
+                # Check for container-related errors
+                if any(
+                    keyword in error_msg
+                    for keyword in [
+                        "container",
+                        "exec session",
+                        "not running",
+                        "state improper",
+                        "no such container",
+                    ]
+                ):
+                    logging.warning(
+                        f"Container error on attempt {attempt + 1}/{max_retries}: {e}"
+                    )
+                    if attempt < max_retries - 1:
+                        logging.info("Attempting to recreate container...")
+                        try:
+                            self._recreate()
+                            logging.info("Container recreated successfully")
+                            continue
+                        except Exception as recreate_error:
+                            logging.error(
+                                f"Failed to recreate container: {recreate_error}"
+                            )
+                            if attempt == max_retries - 1:
+                                raise RuntimeError(
+                                    f"Container failed and could not be recreated: {e}"
+                                ) from e
+                    else:
+                        raise RuntimeError(
+                            f"Container failed after {max_retries} attempts: {e}"
+                        ) from e
+                else:
+                    # Non-container error, propagate immediately
+                    raise
+
+        # Should never reach here, but for type safety
+        raise RuntimeError("Execution failed after all retry attempts")
 
 
 class SandboxedPythonCoder(ForgeActor):

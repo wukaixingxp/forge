@@ -11,17 +11,6 @@ from typing import Any, Coroutine, Optional
 
 logger = logging.getLogger(__name__)
 
-# Add file handler to capture logs from actor processes
-_file_handler = logging.FileHandler(
-    "/home/kaiwu/work/kaiwu/forge/reward_actor.log", mode="a"
-)
-_file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-)
-logger.addHandler(_file_handler)
-logger.setLevel(logging.INFO)
-
 
 class MathReward:
     """Reward class for evaluating math correctness."""
