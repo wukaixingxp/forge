@@ -7,11 +7,13 @@
 import logging
 import socket
 import sys
+import traceback
 
 from envs.coding_env import CodeAction, CodingEnv
-from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
+from forge.observability.metrics import record_metric, Reduce
+from monarch.actor import endpoint
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -220,22 +222,78 @@ class OpenEnvCoder(ForgeActor):
 
             except Exception as e:
                 error_msg = str(e).lower()
-                # Check for container-related errors
-                if any(
+                # Check for ACTUAL container-related errors (not HTTP timeouts or code errors)
+                # Be specific to avoid false positives that trigger unnecessary container recreation
+                is_container_error = any(
                     keyword in error_msg
                     for keyword in [
-                        "container",
-                        "docker",
-                        "connection",
-                        "exec session",
-                        "not running",
-                        "state improper",
                         "no such container",
+                        "container not found",
+                        "container is not running",
+                        "container has stopped",
+                        "container exited",
+                        "exec session",
+                        "state improper",
+                        "oci runtime error",
+                        "docker daemon",
+                        "cannot connect to docker",
                     ]
+                )
+
+                # Exclude HTTP-level errors which don't require container recreation
+                is_http_error = any(
+                    keyword in error_msg
+                    for keyword in [
+                        "connection timeout",
+                        "read timeout",
+                        "http error",
+                        "status code",
+                        "connection refused",  # Keep this - means container is dead
+                    ]
+                )
+
+                # Only recreate if it's a real container issue, not just HTTP timeout
+                if is_container_error and not (
+                    is_http_error and "connection timeout" in error_msg
                 ):
-                    logging.warning(
-                        f"Container error on attempt {attempt + 1}/{max_retries}: {e}"
+                    # ========== CONTAINER ERROR LOGGING ==========
+                    # Log to training metrics
+                    record_metric(
+                        "container/error_count",
+                        1,
+                        Reduce.SUM,
                     )
+                    record_metric(
+                        f"container/recreation_attempt_{attempt + 1}",
+                        1,
+                        Reduce.SUM,
+                    )
+
+                    # Prominent console output for debugging
+                    print("\n" + "=" * 80)
+                    print("🔴 CONTAINER ERROR DETECTED!")
+                    print("=" * 80)
+                    print(f"Attempt: {attempt + 1}/{max_retries}")
+                    print(f"Error Type: {type(e).__name__}")
+                    print(f"Error Message: {str(e)}")
+                    print(f"Error Message (lowercase): {error_msg}")
+                    print(f"\nIs Container Error: {is_container_error}")
+                    print(f"Is HTTP Error: {is_http_error}")
+                    print("\nFull Traceback:")
+                    print("-" * 80)
+                    traceback.print_exc()
+                    print("-" * 80)
+                    print("=" * 80 + "\n")
+
+                    # Also log to logging system
+                    logging.error(
+                        f"Container error on attempt {attempt + 1}/{max_retries}:\n"
+                        f"  Error Type: {type(e).__name__}\n"
+                        f"  Error Message: {str(e)}\n"
+                        f"  Is Container Error: {is_container_error}\n"
+                        f"  Is HTTP Error: {is_http_error}"
+                    )
+
                     if attempt < max_retries - 1:
                         logging.info("Attempting to recreate environment...")
                         try:
@@ -282,6 +340,25 @@ class OpenEnvCoder(ForgeActor):
                         ) from e
                 else:
                     # Non-container error, propagate immediately
+                    # Log this so user knows why it's not triggering container recreation
+                    print("\n" + "-" * 80)
+                    print("⚠️  NON-CONTAINER ERROR (will not recreate container)")
+                    print("-" * 80)
+                    print(f"Error Type: {type(e).__name__}")
+                    print(f"Error Message: {str(e)}")
+                    print(f"Error Message (lowercase): {error_msg}")
+                    print(f"\nIs Container Error: {is_container_error}")
+                    print(f"Is HTTP Error: {is_http_error}")
+                    print("-" * 80 + "\n")
+
+                    logging.debug(
+                        f"Non-container error (propagating immediately):\n"
+                        f"  Error Type: {type(e).__name__}\n"
+                        f"  Error Message: {str(e)}\n"
+                        f"  Is Container Error: {is_container_error}\n"
+                        f"  Is HTTP Error: {is_http_error}"
+                    )
+
                     raise
 
         # Should never reach here, but for type safety

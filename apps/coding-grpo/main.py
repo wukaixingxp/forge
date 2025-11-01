@@ -391,18 +391,44 @@ class DatasetActor(ForgeActor):
 
 Given a problem description, write a Python function that solves it following these guidelines:
 
+**CODE REQUIREMENTS:**
 1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
 2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
 3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
-4. **Use standard library only**: Unless explicitly specified otherwise in the problem
-5. **Ensure correctness**: Your solution should be robust and handle all requirements
+4. **Ensure correctness**: Your solution should be robust and handle all requirements
 
-Format your response as:
+**CRITICAL RESTRICTIONS (Your code WILL FAIL if you violate these):**
+
+**FORBIDDEN KEYWORDS:**
+- NO `global` keyword (use function parameters/returns instead)
+- NO `yield` keyword (no generators, use lists instead)
+- NO `nonlocal` keyword (restructure your code to avoid it)
+
+**FORBIDDEN OPERATIONS:**
+- NO dunder attributes: `__dict__`, `__name__`, `__code__`, etc.
+- NO dunder methods: `__contains__()`, etc. (use `in` operator instead)
+- NO `input()` function (all inputs come from function parameters)
+- NO `locals()` or `globals()` functions
+- NO nested class definitions
+
+**FILE OPERATIONS:**
+- Use `pathlib` for file paths, NOT `os.path`
+- Example: `from pathlib import Path; p = Path('/path/to/file')`
+
+**ALLOWED STANDARD LIBRARY IMPORTS:**
+- Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
+- Data: json, csv, struct, base64, dataclasses, copy, heapq, enum
+- Strings: string, ast, unicodedata
+- Advanced: abc, contextlib, inspect, secrets, uuid, pathlib, io
+- Async/Threading: threading, asyncio, concurrent.futures
+- Network: socket, urllib.parse
+
+**FORMAT YOUR RESPONSE AS:**
 
 ```python
 def function_name(parameters):
     \"\"\"Comprehensive docstring explaining the function.\"\"\"
-    # Implementation
+    # Implementation here
     pass
 ```
 
@@ -524,10 +550,52 @@ async def main(cfg: DictConfig):
 
     # ---- Setup services ---- #
 
-    # Setup coding environment
-    # Default additional_imports: ["sys", "os", "functools", "typing"]
-    # To customize: coder_actor = await OpenEnvCoder.as_actor(additional_imports=["sys", "os", "numpy", "pandas"])
-    coder_actor = await OpenEnvCoder.as_actor()
+    # Setup coding environment with comprehensive standard library imports
+    # Based on analysis of 143 numpy, 47 requests, 35 urllib.parse, 31 socket, 31 dataclasses import failures
+    coder_actor = await OpenEnvCoder.as_actor(
+        additional_imports=[
+            # Core (default)
+            "sys",
+            "os",
+            "functools",
+            "typing",
+            # Data Science & Numerical
+            "numpy",
+            "pandas",
+            # Data Structures & Collections (31 dataclasses, 22 copy, 19 heapq, 17 enum)
+            "dataclasses",
+            "copy",
+            "heapq",
+            "enum",
+            # String & Text Processing (22 string, 21 ast)
+            "string",
+            "ast",
+            # Data Formats & Serialization (25 json, 15 struct, 10 base64, 5 csv)
+            "json",
+            "struct",
+            "base64",
+            "csv",
+            # Math & Numbers (12 cmath)
+            "cmath",
+            # Abstract Base Classes & Patterns (16 abc, 7 contextlib, 7 inspect)
+            "abc",
+            "contextlib",
+            "inspect",
+            # Security & Utilities (16 secrets, 4 uuid)
+            "secrets",
+            "uuid",
+            # I/O & Path Operations (6 pathlib, 5 io)
+            "pathlib",
+            "io",
+            # Async & Concurrency (11 threading, 6 asyncio, 3 concurrent.futures)
+            "threading",
+            "asyncio",
+            "concurrent.futures",
+            # Network & Web (35 urllib.parse, 31 socket)
+            "urllib.parse",
+            "socket",
+        ]
+    )
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
