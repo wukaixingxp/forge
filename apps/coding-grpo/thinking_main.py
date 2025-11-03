@@ -41,9 +41,8 @@ from forge.actors._torchstore_utils import (
 )
 from forge.actors.generator import Generator
 
-from forge.actors.podman_coder import PodmanPythonCoder
-
-# from forge.actors.openenv_coder import OpenEnvCoder
+# from forge.actors.podman_coder import PodmanPythonCoder
+from forge.actors.openenv_coder import OpenEnvCoder
 
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
@@ -172,7 +171,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.0,
+    beta: float = 0.001,
 ) -> torch.Tensor:
     """
     GRPO Loss Function for on-policy samples with numerical stability improvements
@@ -190,13 +189,40 @@ def simple_grpo_loss(
     ref_logprobs is ONLY used for the KL penalty, not the policy ratio.
     """
     logprobs: torch.Tensor = compute_logprobs(logits, response)
-    kl = torch.exp(ref_logprobs - logprobs) - (ref_logprobs - logprobs) - 1
+
+    # Check for NaN/Inf in logprobs
+    if torch.isnan(logprobs).any() or torch.isinf(logprobs).any():
+        print("WARNING: NaN/Inf detected in logprobs!")
+        logprobs = torch.nan_to_num(logprobs, nan=0.0, posinf=0.0, neginf=-100.0)
+
+    # ✅ CORRECT: On-policy REINFORCE gradient
+    # This gives gradient: -A · ∇log p_current
+    # Forward value: 1.0 * advantages (since exp(0) = 1)
+    # Backward gradient: advantages · ∇log p_current
     per_token_policy_loss = torch.exp(logprobs - logprobs.detach()) * advantages
+
+    # ✅ KL divergence penalty with numerical stability
+    # Clamp to prevent extreme values while allowing meaningful divergence
+    delta = (ref_logprobs - logprobs).clamp(-10, 10)
+    kl = torch.exp(delta) - delta - 1
+
+    # ✅ Clamp KL to prevent extreme values
+    kl = kl.clamp(-20, 20)
+
     per_token_loss = -(per_token_policy_loss - beta * kl)
+
+    # ✅ Loss clamping as a safety measure
+    per_token_loss = per_token_loss.clamp(-100, 100)
+
     loss = (
         ((per_token_loss * padding_mask).sum(dim=1))
         / (padding_mask.sum(dim=1).clamp(min=1.0))
     ).mean()
+
+    # Check for NaN/Inf in final loss
+    if torch.isnan(loss) or torch.isinf(loss):
+        print("WARNING: NaN/Inf detected in final loss!")
+        loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
 
     # ✅ Enhanced logging for debugging
     record_metric("loss/policy_loss", per_token_policy_loss.mean().item(), Reduce.MEAN)
@@ -209,6 +235,7 @@ def simple_grpo_loss(
     record_metric("loss/per_token_loss_max", per_token_loss.max().item(), Reduce.MEAN)
     record_metric("loss/logprobs_mean", logprobs.mean().item(), Reduce.MEAN)
     record_metric("loss/ref_logprobs_mean", ref_logprobs.mean().item(), Reduce.MEAN)
+    record_metric("loss/delta_mean", delta.mean().item(), Reduce.MEAN)
 
     return loss
 
@@ -360,16 +387,46 @@ class DatasetActor(ForgeActor):
 
         def get_coding_system_prompt():
             """Get system prompt for coding tasks."""
-            return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
+            return """IMPORTANT: You must structure your response in two parts:
+1. First, write your detailed reasoning and problem-solving approach inside <think></think> tags
+2. Then, provide your final solution after the thinking section
 
-Given a problem description, write a Python function that solves it following these guidelines:
+Given a problem description, follow this process:
 
-**CODE REQUIREMENTS:**
-1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
-2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
-3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
-4. **Ensure correctness**: Your solution should be robust and handle all requirements
+<think>
+- Carefully analyze the problem requirements and constraints
+- Break down the problem into smaller components
+- Consider multiple approaches and their trade-offs
+- Think through edge cases and potential issues
+- Plan your algorithm step by step
+- Consider time and space complexity
+- Think about how to test your solution thoroughly
+</think>
 
+Then write a Python function that solves the problem following these guidelines:
+1. Write clean, readable, and efficient Python code
+2. Add a comprehensive docstring explaining what the function does
+3. Handle edge cases appropriately
+4. Use only standard library imports unless specified otherwise
+5. Ensure your solution is correct and robust
+
+**CRITICAL RESTRICTIONS (Your code WILL FAIL if you violate these):**
+
+**FORBIDDEN KEYWORDS:**
+- NO `global` keyword (use function parameters/returns instead)
+- NO `yield` keyword (no generators, use lists instead)
+- NO `nonlocal` keyword (restructure your code to avoid it)
+
+**FORBIDDEN OPERATIONS:**
+- NO dunder attributes: `__dict__`, `__name__`, `__code__`, etc.
+- NO dunder methods: `__contains__()`, etc. (use `in` operator instead)
+- NO `input()` function (all inputs come from function parameters)
+- NO `locals()` or `globals()` functions
+- NO nested class definitions
+
+**FILE OPERATIONS:**
+- Use `pathlib` for file paths, NOT `os.path`
+- Example: `from pathlib import Path; p = Path('/path/to/file')`
 
 **ALLOWED STANDARD LIBRARY IMPORTS:**
 - Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
@@ -381,14 +438,68 @@ Given a problem description, write a Python function that solves it following th
 
 **FORMAT YOUR RESPONSE AS:**
 
+Format your response as:
+<think>
+[Your detailed reasoning, analysis, and planning here]
+</think>
+
 ```python
 def function_name(parameters):
     \"\"\"Comprehensive docstring explaining the function.\"\"\"
-    # Implementation here
+    # Implementation
     pass
 ```
 
 Provide the final, working solution. Focus on correctness, readability, and efficiency."""
+
+        #         def get_coding_system_prompt():
+        #             """Get system prompt for coding tasks."""
+        #             return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
+
+        # Given a problem description, write a Python function that solves it following these guidelines:
+
+        # **CODE REQUIREMENTS:**
+        # 1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
+        # 2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
+        # 3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
+        # 4. **Ensure correctness**: Your solution should be robust and handle all requirements
+
+        # **CRITICAL RESTRICTIONS (Your code WILL FAIL if you violate these):**
+
+        # **FORBIDDEN KEYWORDS:**
+        # - NO `global` keyword (use function parameters/returns instead)
+        # - NO `yield` keyword (no generators, use lists instead)
+        # - NO `nonlocal` keyword (restructure your code to avoid it)
+
+        # **FORBIDDEN OPERATIONS:**
+        # - NO dunder attributes: `__dict__`, `__name__`, `__code__`, etc.
+        # - NO dunder methods: `__contains__()`, etc. (use `in` operator instead)
+        # - NO `input()` function (all inputs come from function parameters)
+        # - NO `locals()` or `globals()` functions
+        # - NO nested class definitions
+
+        # **FILE OPERATIONS:**
+        # - Use `pathlib` for file paths, NOT `os.path`
+        # - Example: `from pathlib import Path; p = Path('/path/to/file')`
+
+        # **ALLOWED STANDARD LIBRARY IMPORTS:**
+        # - Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
+        # - Data: json, csv, struct, base64, dataclasses, copy, heapq, enum
+        # - Strings: string, ast, unicodedata
+        # - Advanced: abc, contextlib, inspect, secrets, uuid, pathlib, io
+        # - Async/Threading: threading, asyncio, concurrent.futures
+        # - Network: socket, urllib.parse
+
+        # **FORMAT YOUR RESPONSE AS:**
+
+        # ```python
+        # def function_name(parameters):
+        #     \"\"\"Comprehensive docstring explaining the function.\"\"\"
+        #     # Implementation here
+        #     pass
+        # ```
+
+        # Provide the final, working solution. Focus on correctness, readability, and efficiency."""
 
         def transform_sample(sample):
             # AceCode format with OSS filtering
@@ -506,19 +617,56 @@ async def main(cfg: DictConfig):
 
     # ---- Setup services ---- #
 
-    # Setup coding environment using PodmanPythonCoder
-    # Note: PodmanPythonCoder is simpler than OpenEnvCoder and doesn't support
-    # additional_imports, container_memory_gb, or request_timeout_s parameters.
-    # It uses raw podman commands with a basic Python container image.
-    coder_actor = await PodmanPythonCoder.as_actor(
-        container_image="python:3.10",  # Docker Hub Python image
-        container_name="sandbox",  # Unique container name
-        max_workers=4,  # Maximum concurrent subprocess executions
+    # Setup coding environment with comprehensive standard library imports
+    # Based on analysis of 143 numpy, 47 requests, 35 urllib.parse, 31 socket, 31 dataclasses import failures
+    coder_actor = await OpenEnvCoder.as_actor(
+        port=8432,  # Use default port to avoid command override bug in LocalDockerProvider
+        additional_imports=[
+            # Core (default)
+            "sys",
+            "os",
+            "functools",
+            "typing",
+            # Data Science & Numerical
+            "numpy",
+            # Data Structures & Collections (31 dataclasses, 22 copy, 19 heapq, 17 enum)
+            "dataclasses",
+            "copy",
+            "heapq",
+            "enum",
+            # String & Text Processing (22 string, 21 ast)
+            "string",
+            "ast",
+            # Data Formats & Serialization (25 json, 15 struct, 10 base64, 5 csv)
+            "json",
+            "struct",
+            "base64",
+            "csv",
+            # Math & Numbers (12 cmath)
+            "cmath",
+            # Abstract Base Classes & Patterns (16 abc, 7 contextlib, 7 inspect)
+            "abc",
+            "contextlib",
+            "inspect",
+            # Security & Utilities (16 secrets, 4 uuid)
+            "secrets",
+            "uuid",
+            # I/O & Path Operations (6 pathlib, 5 io)
+            "pathlib",
+            "io",
+            # Async & Concurrency (11 threading, 6 asyncio, 3 concurrent.futures)
+            "threading",
+            "asyncio",
+            "concurrent.futures",
+            # Network & Web (35 urllib.parse, 31 socket)
+            "urllib.parse",
+            "socket",
+        ],
     )
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
-    # thinking_reward = ThinkingReward()
+    thinking_reward = ThinkingReward()
 
     (
         dataloader,
@@ -540,7 +688,7 @@ async def main(cfg: DictConfig):
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
         ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
         RewardActor.options(**cfg.services.reward_actor).as_service(
-            reward_functions=[ground_truth_reward]
+            reward_functions=[ground_truth_reward, thinking_reward]
         ),
     )
 
@@ -716,7 +864,7 @@ async def main(cfg: DictConfig):
     except KeyboardInterrupt:
         print("Training interrupted by user")
     finally:
-        print("Shutting down... (this may take a few seconds)")
+        print("Shutting down...")
         shutdown_event.set()
 
         try:
@@ -741,7 +889,7 @@ if __name__ == "__main__":
     @parse
     def _main(cfg):
         """Main entry point for GRPO training."""
-        os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+        os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
         os.environ["NCCL_TIMEOUT_MS"] = "60000"  # 60 second timeout
         os.environ["MONARCH_HOSTMESH_V1"] = "1"
         os.environ["TORCHSTORE_RDMA_ENABLED"] = "1"

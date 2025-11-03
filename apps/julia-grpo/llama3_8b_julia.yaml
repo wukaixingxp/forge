@@ -1,24 +1,23 @@
-# Grouped Relative Policy Optimization (GRPO) for Code Generation - Hard Dataset
-# >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b_hard.yaml
+# Grouped Relative Policy Optimization (GRPO) for Julia Code Generation
+# >>> python -m apps.julia-grpo.main --config apps/julia-grpo/llama3_8b_julia.yaml
 
 # Global configuration
-group_size: 16  # ✅ INCREASED from 16 to 32 for better reward diversity and learning signal on hard dataset
-batch_size: 8   # Reduced to 8 to avoid OOM with seq_len=3072
-max_req_tokens: 1024  # Increased for coding prompts with examples
-max_res_tokens: 2048  # Increased for longer code generation with thinking
+group_size: 2  # num_generations from unsloth.py
+batch_size: 1   # per_device_train_batch_size from unsloth.py
+max_req_tokens: 2048  # max_prompt_length from unsloth.py
+max_res_tokens: 1024  # max_completion_length from unsloth.py
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1 # Off by one by default
 
 # Main loop configuration
-rollout_threads: 1   # Recommended to set equal to policy.num_replicas
+rollout_threads: 1   # Single thread for Julia code generation
 
 
-# Observability configuration
 # Observability configuration
 metric_logging:
   wandb:
     entity: "torchforge"
-    project: "kaiwu-coding-grpo"
+    project: "kaiwu-julia-grpo"
     logging_mode: global_reduce
   console:
     logging_mode: global_reduce
@@ -27,8 +26,7 @@ metric_logging:
 
 # Dataset configuration
 dataset:
-  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/scripts/data/acecode_89k/acecode_hard02.json"
-  #path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/data/acecode_87K/acecode_87K.json"
+  path: "/home/kaiwu/work/julia_trainset.parquet"
   revision: "main"
   data_split: "train"
   streaming: false
@@ -49,7 +47,7 @@ policy:
   sampling_params:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/sampling_params.html#vllm.sampling_params.SamplingParams
     n: ${group_size}
     max_tokens: ${max_res_tokens}
-    temperature: 1.0  # ✅ FIXED: Increased to 1.0 for maximum exploration during RL training
+    temperature: 1.0  # temperature from unsloth.py
     top_p: 1.0
 
 # Trainer configuration
@@ -60,15 +58,16 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 1e-5  # ✅ REDUCED from 5e-5 to 5e-6 to prevent rapid policy divergence and reward collapse
-    eps: 1e-8  # ✅ FIXED: Changed from 1e-9 to 1e-8 for better numerical stability
+    lr: 5e-5  # learning_rate from unsloth.py
+    eps: 1e-8
+    weight_decay: 0.01  # weight_decay from unsloth.py
   lr_scheduler:
-    warmup_steps: 1
+    warmup_steps: 50  # warmup_ratio=0.1 * max_steps=500 from unsloth.py
   training:
     local_batch_size: ${batch_size}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}  # seq_len >= max_req_tokens + max_res_tokens
     max_norm: 1.0
-    steps: 1500
+    steps: 500  # max_steps from unsloth.py
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -83,11 +82,11 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "checkpoint_llama3_8b_hard"
+    folder: "checkpoint_llama3_8b_julia"
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 100
+    interval: 250  # save_steps from unsloth.py
     async_mode: "disabled"
   activation_checkpoint:
     mode: selective

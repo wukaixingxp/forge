@@ -104,6 +104,8 @@ class OpenEnvCoder(ForgeActor):
         additional_imports: List of additional Python modules to authorize for import.
                           These will be passed to the container via the PYTHON_ADDITIONAL_IMPORTS
                           environment variable. Default: ["sys", "os", "functools", "typing"]
+        container_memory_gb: Memory limit for the container in GB (default: 4GB).
+                           Set this based on your system resources to prevent OOM kills.
     """
 
     def __init__(
@@ -113,6 +115,7 @@ class OpenEnvCoder(ForgeActor):
         container_timeout_s: float = 180.0,
         request_timeout_s: float = 120.0,
         port: int = 8432,
+        container_memory_gb: int = 4,
     ):
         self.docker_image = docker_image
         if additional_imports is None:
@@ -122,6 +125,7 @@ class OpenEnvCoder(ForgeActor):
         self.container_timeout_s = container_timeout_s
         self.request_timeout_s = request_timeout_s
         self.port = port
+        self.container_memory_gb = container_memory_gb
         self.client: CodingEnv | None = None
 
     @endpoint
@@ -154,6 +158,7 @@ class OpenEnvCoder(ForgeActor):
                 request_timeout_s=self.request_timeout_s,
                 env_vars=env_vars,
                 port=available_port,
+                memory_gb=self.container_memory_gb,  # Pass memory limit to container
             )
             logging.debug("Successfully initialized OpenEnv client.")
             if self.client:
@@ -194,11 +199,6 @@ class OpenEnvCoder(ForgeActor):
             The captured stdout and stderr from the execution, as a
             (stdout, stderr) tuple of strings.
         """
-        print("=" * 80)
-        print("[DEBUG] INPUT CODE:")
-        print("-" * 80)
-        print(code)
-        print("-" * 80)
         logging.debug(f"Executing {code}")
         if not self.client:
             raise RuntimeError("Client not initialized. Call setup() first.")
@@ -210,13 +210,6 @@ class OpenEnvCoder(ForgeActor):
 
                 output = result.observation.stdout
                 error = result.observation.stderr
-
-                print("[DEBUG] EXECUTION OUTPUTS:")
-                print("-" * 80)
-                print(f"Return Code: {result.observation.exit_code}")
-                print(f"\nSTDOUT:\n{output if output else '(empty)'}")
-                print(f"\nSTDERR:\n{error if error else '(empty)'}")
-                print("=" * 80)
 
                 return output, error
 
@@ -237,6 +230,7 @@ class OpenEnvCoder(ForgeActor):
                         "oci runtime error",
                         "docker daemon",
                         "cannot connect to docker",
+                        "connection refused",  # Container is dead/not responding
                     ]
                 )
 
@@ -248,7 +242,6 @@ class OpenEnvCoder(ForgeActor):
                         "read timeout",
                         "http error",
                         "status code",
-                        "connection refused",  # Keep this - means container is dead
                     ]
                 )
 
@@ -300,6 +293,13 @@ class OpenEnvCoder(ForgeActor):
                             # Try to recreate the environment with the same env vars and timeouts
                             self.client.close()
 
+                            # Wait for container to fully terminate before creating a new one
+                            # This prevents Podman thread exhaustion from rapid container cycling
+                            import time
+
+                            logging.info("Waiting for container to fully terminate...")
+                            time.sleep(3)  # Give Podman time to clean up
+
                             # Find an available port for the new container
                             available_port = find_available_port(self.port)
                             if available_port != self.port:
@@ -314,7 +314,8 @@ class OpenEnvCoder(ForgeActor):
                                 env_vars["PYTHON_ADDITIONAL_IMPORTS"] = imports_str
                             logging.info(
                                 f"Recreating container with timeout_s={self.container_timeout_s}, "
-                                f"request_timeout_s={self.request_timeout_s}, port={available_port}"
+                                f"request_timeout_s={self.request_timeout_s}, port={available_port}, "
+                                f"memory_gb={self.container_memory_gb}"
                             )
                             self.client = CodingEnv.from_docker_image(
                                 self.docker_image,
@@ -322,6 +323,7 @@ class OpenEnvCoder(ForgeActor):
                                 request_timeout_s=self.request_timeout_s,
                                 env_vars=env_vars,
                                 port=available_port,
+                                memory_gb=self.container_memory_gb,  # Pass memory limit to recreated container
                             )
                             self.client.reset()
                             logging.info("Environment recreated successfully")

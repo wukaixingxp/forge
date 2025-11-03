@@ -2,10 +2,10 @@
 # >>> python -m apps.coding-grpo.main --config apps/coding-grpo/llama3_8b_hard.yaml
 
 # Global configuration
-group_size: 16  # ✅ INCREASED from 16 to 32 for better reward diversity and learning signal on hard dataset
-batch_size: 8   # Reduced to 8 to avoid OOM with seq_len=3072
+group_size: 10  # ✅ INCREASED from 16 to 32 for better reward diversity and learning signal on hard dataset
+batch_size: 4   # Reduced to 8 to avoid OOM with seq_len=3072
 max_req_tokens: 1024  # Increased for coding prompts with examples
-max_res_tokens: 2048  # Increased for longer code generation with thinking
+max_res_tokens: 4096  # Increased for longer code generation with thinking
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1 # Off by one by default
 
@@ -60,7 +60,7 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 1e-5  # ✅ REDUCED from 5e-5 to 5e-6 to prevent rapid policy divergence and reward collapse
+    lr: 5e-6  # ✅ REDUCED from 5e-5 to 5e-6 to prevent rapid policy divergence and reward collapse
     eps: 1e-8  # ✅ FIXED: Changed from 1e-9 to 1e-8 for better numerical stability
   lr_scheduler:
     warmup_steps: 1
@@ -69,7 +69,7 @@ trainer:
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}  # seq_len >= max_req_tokens + max_res_tokens
     max_norm: 1.0
     steps: 1500
-    dtype: bfloat16
+    dtype: float16
     gc_freq: 1
   compile:
     enable: false
@@ -107,7 +107,7 @@ ref_model:
     hf_assets_path: hf://${model}
   training:
     seq_len: ${trainer.training.seq_len}
-    dtype: bfloat16
+    dtype: float16
     gc_freq: 1
   compile:
     enable: false

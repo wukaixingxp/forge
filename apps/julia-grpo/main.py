@@ -4,7 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-# Usage: python -m apps.grpo.main --config apps/grpo/qwen3_1_7b.yaml
+# Usage: python -m apps.julia-grpo.main --config apps/julia-grpo/llama3_8b_julia.yaml
 
 import os
 
@@ -41,9 +41,8 @@ from forge.actors._torchstore_utils import (
 )
 from forge.actors.generator import Generator
 
-from forge.actors.podman_coder import PodmanPythonCoder
-
-# from forge.actors.openenv_coder import OpenEnvCoder
+# from forge.actors.podman_coder import PodmanPythonCoder
+from forge.actors.openenv_coder import OpenEnvCoder
 
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
@@ -346,62 +345,54 @@ class ComputeAdvantages(ForgeActor):
 
 @dataclass
 class DatasetActor(ForgeActor):
-    """Actor wrapper for HuggingFace dataset to provide async interface."""
+    """Actor wrapper for Julia dataset to provide async interface."""
 
-    path: str = "TIGER-Lab/AceCode-87K"
+    path: str = "/home/kaiwu/work/julia_trainset.parquet"
     revision: str = "main"
     data_split: str = "train"
-    streaming: bool = True
-    model: str = "Qwen/Qwen3-1.7B"
+    streaming: bool = False
+    model: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
     @endpoint
     def setup(self):
         self._tokenizer = get_tokenizer(self.model)
 
-        def get_coding_system_prompt():
-            """Get system prompt for coding tasks."""
-            return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
+        def get_julia_code_gen_prompt():
+            """Get system prompt for Julia coding tasks."""
+            return """You are a precise and pragmatic Julia programmer.
 
-Given a problem description, write a Python function that solves it following these guidelines:
+Write a **single Julia function** that correctly solves the problem described below.
 
-**CODE REQUIREMENTS:**
-1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
-2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
-3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
-4. **Ensure correctness**: Your solution should be robust and handle all requirements
+Rules:
+- The code must be syntactically correct and runnable as is.
+- Do not use arrow functions, ternary operators, or modern syntax that may cause issues.
+- Use only the Julia standard library.
+- Do **not** wrap the code in a module or add a `main` function.
+- Do **not** include any test code in your response.
+- Do **not** hardcode specific test cases or outputs — the function must work for general inputs.
+- The **function name must exactly match** the one used in the provided tests.
+- Respond with **only the Julia function** and nothing else (no explanations, no comments, no extra text)
+- The function name must exactly match the one used in the provided tests.
+- Return only the Julia function.
+- character literal should not contain multiple characters.
+- take care of object types and mind that spaces matter in julia so cannot add random spaces
 
+Passing tests and clean, compilable code are rewarded. Hardcoding or failing tests is penalized.
 
-**ALLOWED STANDARD LIBRARY IMPORTS:**
-- Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
-- Data: json, csv, struct, base64, dataclasses, copy, heapq, enum
-- Strings: string, ast, unicodedata
-- Advanced: abc, contextlib, inspect, secrets, uuid, pathlib, io
-- Async/Threading: threading, asyncio, concurrent.futures
-- Network: socket, urllib.parse
+Test Reference (for context only, do not include in the output):
+{julia_test}
 
-**FORMAT YOUR RESPONSE AS:**
-
-```python
-def function_name(parameters):
-    \"\"\"Comprehensive docstring explaining the function.\"\"\"
-    # Implementation here
-    pass
-```
-
-Provide the final, working solution. Focus on correctness, readability, and efficiency."""
+Code:""".strip()
 
         def transform_sample(sample):
-            # AceCode format with OSS filtering
-            if (
-                sample.get("source") != "oss"
-                or not sample.get("test_cases")
-                or not isinstance(sample.get("test_cases"), list)
-                or len(sample.get("test_cases", [])) == 0
-            ):
+            # Julia dataset format
+            if not sample.get("julia_test") or not sample.get("first_test_case"):
                 return None
 
-            system_prompt = get_coding_system_prompt()
-            request: str = sample.get("question", sample.get("prompt", ""))
+            julia_test = sample.get("first_test_case", "")
+            system_prompt = get_julia_code_gen_prompt().format(julia_test=julia_test)
+            request: str = sample.get("julia_prompt", "")
+
             as_chat = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request},
@@ -410,27 +401,29 @@ Provide the final, working solution. Focus on correctness, readability, and effi
                 as_chat,
                 tokenize=False,
                 add_generation_prompt=True,
-                # enable_thinking=True,
             )
-            test_cases = sample.get("test_cases", [])
+
             return {
                 "request": formatted_request,
-                "target": test_cases,  # Use test cases as target for reward function
-                "task_id": sample.get("id", ""),
-                "source": sample.get("source"),
-                "difficulty": sample.get("difficulty", "unknown"),
+                "target": sample.get(
+                    "julia_test", ""
+                ),  # Full test code for reward function
+                "task_id": sample.get("task_id", ""),
             }
 
         # Check if path is a local file
         import os
 
-        if os.path.isfile(self.path) and self.path.endswith(".json"):
-            # Load local JSON file
+        import pandas as pd
+
+        if os.path.isfile(self.path) and self.path.endswith(".parquet"):
+            # Load local Parquet file
+            df = pd.read_parquet(self.path)
+            df = df[["julia_prompt", "julia_test", "first_test_case", "task_id"]]
             ds = load_dataset(
-                "json",
-                data_files=self.path,
+                "arrow",
+                data_files={"train": self.path},
                 split=self.data_split,
-                streaming=self.streaming,
             )
         else:
             # Load from HuggingFace Hub or directory
@@ -440,7 +433,8 @@ Provide the final, working solution. Focus on correctness, readability, and effi
                 streaming=self.streaming,
                 revision=self.revision,
             )
-        # Filter and transform to coding format
+
+        # Filter and transform to Julia format
         ds = ds.filter(lambda x: transform_sample(x) is not None)
         ds = ds.map(transform_sample)
         ds = ds.shuffle()
@@ -506,19 +500,15 @@ async def main(cfg: DictConfig):
 
     # ---- Setup services ---- #
 
-    # Setup coding environment using PodmanPythonCoder
-    # Note: PodmanPythonCoder is simpler than OpenEnvCoder and doesn't support
-    # additional_imports, container_memory_gb, or request_timeout_s parameters.
-    # It uses raw podman commands with a basic Python container image.
-    coder_actor = await PodmanPythonCoder.as_actor(
-        container_image="python:3.10",  # Docker Hub Python image
-        container_name="sandbox",  # Unique container name
-        max_workers=4,  # Maximum concurrent subprocess executions
-    )
+    # Setup Julia environment for code testing
+    # JuliaEnv uses docker container to execute and test Julia code
+    # Memory and timeout settings are critical for reliable execution
+    from forge.actors.julia_env_reward import JuliaEnvReward
 
-    # Setup coding reward functions
-    ground_truth_reward = GroundTruthTestReward(coder_actor)
-    # thinking_reward = ThinkingReward()
+    julia_env_reward = JuliaEnvReward(
+        base_url="http://localhost:8000",  # Docker container running JuliaEnv
+        request_timeout_s=60.0,  # Increased timeout for Julia code execution
+    )
 
     (
         dataloader,
@@ -540,7 +530,7 @@ async def main(cfg: DictConfig):
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
         ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
         RewardActor.options(**cfg.services.reward_actor).as_service(
-            reward_functions=[ground_truth_reward]
+            reward_functions=[julia_env_reward]
         ),
     )
 

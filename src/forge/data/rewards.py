@@ -149,29 +149,34 @@ class GroundTruthTestReward:
         async def _async_evaluate():
             reward = 0.0
 
+            # DEBUGGING: Log entry to _async_evaluate
+            print(
+                f"[DEBUG] _async_evaluate called with coder_actor={self.coder_actor is not None}, test_cases_count={len(test_cases) if test_cases else 0}"
+            )
+
             if not self.coder_actor:
-                logger.info("No coder_actor available - Reward: 0.0")
+                print("No coder_actor available - Reward: 0.0")
                 return reward
 
             if not test_cases:
-                logger.info("No test cases provided - Reward: 0.0")
+                print("No test cases provided - Reward: 0.0")
                 return reward
 
             raw_content = response
-            logger.info("=" * 80)
-            logger.info("RAW CONTENT FROM MODEL:")
-            logger.info("-" * 80)
-            logger.info(raw_content)
-            logger.info("-" * 80)
+            print("=" * 80)
+            print("RAW CONTENT FROM MODEL:")
+            print("-" * 80)
+            print(raw_content)
+            print("-" * 80)
 
             text = remove_thinking_tags(raw_content)
             code = extract_python_code(text)
 
             if not code:
-                logger.info("No code extracted - Reward: -1.0")
+                print("No code extracted - Reward: -1.0")
                 return -1
             reward += 0.1
-            logger.info(f"✓ Code extracted - Reward: {reward:.3f}")
+            print(f"✓ Code extracted - Reward: {reward:.3f}")
 
             # First, check if code is syntactically valid
             try:
@@ -180,7 +185,7 @@ class GroundTruthTestReward:
                 # Milestone 2: Code is syntactically valid
             except SyntaxError as e:
                 reward = -0.5
-                logger.info(f"✗ Syntax error: {e} - Final Reward: {reward:.3f}")
+                print(f"✗ Syntax error: {e} - Final Reward: {reward:.3f}")
                 return reward
 
             try:
@@ -241,22 +246,22 @@ if failed_tests:
                 )
                 results_output = output + "\n" + error
 
-                logger.info("=" * 80)
-                logger.info("GroundTruthTestReward - RESULTS OUTPUT:")
-                logger.info("-" * 80)
-                logger.info(results_output)
-                logger.info("-" * 80)
+                print("=" * 80)
+                print("GroundTruthTestReward - RESULTS OUTPUT:")
+                print("-" * 80)
+                print(results_output)
+                print("-" * 80)
 
                 # Check for timeout or immediate crash
                 if "timeout" in error.lower():
-                    logger.info(f"✗ Timeout - Final Reward: {reward:.3f}")
-                    logger.info("=" * 80)
+                    print(f"✗ Timeout - Final Reward: {reward:.3f}")
+                    print("=" * 80)
                     return reward
 
                 # Check if code executed without immediate crash (got to test execution stage)
                 if output and ("PASSED:" in output or "Test " in output):
                     # Milestone 3: Code executed without immediate crash
-                    logger.info(f"✓ Code executed - Reward: {reward:.3f}")
+                    print(f"✓ Code executed - Reward: {reward:.3f}")
 
                     # Parse results from output
                     passed = 0
@@ -280,21 +285,19 @@ if failed_tests:
                     test_reward = success_rate
                     reward += test_reward
 
-                    logger.info(
+                    print(
                         f"✓ Tests: {passed}/{total} ({success_rate:.1%}) - Test reward: +{test_reward:.3f}"
                     )
-                    logger.info(f"Final Reward: {reward:.3f}")
-                    logger.info("=" * 80)
+                    print(f"Final Reward: {reward:.3f}")
+                    print("=" * 80)
 
                     return reward
                 else:
                     # Code crashed before getting to tests
-                    logger.info(
-                        f"✗ Runtime crash before tests - Final Reward: {reward:.3f}"
-                    )
+                    print(f"✗ Runtime crash before tests - Final Reward: {reward:.3f}")
                     if error:
-                        logger.info(f"Error: {error[:200]}")
-                    logger.info("=" * 80)
+                        print(f"Error: {error[:200]}")
+                    print("=" * 80)
                     return reward
 
             except Exception as e:
