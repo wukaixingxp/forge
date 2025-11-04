@@ -20,6 +20,7 @@ os.environ.setdefault("GOMAXPROCS", "4")
 os.environ.setdefault("GOMEMLIMIT", "2GiB")
 
 import asyncio
+import gc
 import logging
 import time
 import uuid
@@ -27,6 +28,14 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import torch
+
+# Optional memory monitoring
+try:
+    import psutil
+
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 # Configure logging to see INFO level messages
 logging.basicConfig(
@@ -629,6 +638,36 @@ async def main(cfg: DictConfig):
                     "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
                 )
                 t.stop()
+
+                # CRITICAL: Explicit memory cleanup to prevent leaks
+                # Clear tensor references
+                del episodes, advantages, responses
+                # Clear CUDA cache if using GPU
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                # Force garbage collection every rollout to prevent accumulation
+                gc.collect()
+
+                # CRITICAL: Clean up zombie processes periodically (every 5 rollouts)
+                # This prevents accumulation of timed-out processes consuming memory
+                if rollout_count % 5 == 0:
+                    killed_count = await coder_actor.cleanup_zombie_processes.call_one()
+                    if killed_count > 0:
+                        print(
+                            f"Rollout {rollout_count}: Cleaned up {killed_count} zombie processes"
+                        )
+                        record_metric(
+                            "memory/zombie_processes_killed", killed_count, Reduce.SUM
+                        )
+
+                # Log memory usage periodically (every 10 rollouts) if psutil is available
+                if rollout_count % 10 == 0 and HAS_PSUTIL:
+                    process = psutil.Process()
+                    memory_mb = process.memory_info().rss / 1024 / 1024
+                    record_metric("memory/process_memory_mb", memory_mb, Reduce.MEAN)
+                    print(
+                        f"Rollout {rollout_count}: Process memory = {memory_mb:.2f} MB"
+                    )
             except RuntimeError as e:
                 error_msg = str(e).lower()
                 # Check if this is a container-related error that couldn't be recovered

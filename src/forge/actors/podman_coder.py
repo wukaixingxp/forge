@@ -13,9 +13,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from monarch.actor import endpoint
-
 from forge.controller import ForgeActor
+
+from monarch.actor import endpoint
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -102,10 +102,18 @@ class PodmanPythonCoder(ForgeActor):
 
     def _recreate(self):
         """(Re)create a clean container instance from the base image."""
-        # Remove any old container
+        # CRITICAL: Remove any old container AND clean up any stray containers
         logging.debug(f"Removing container {self.container_name}")
         subprocess.run(
             ["podman", "rm", "-f", self.container_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Additional cleanup: Remove any exited containers to prevent accumulation
+        logging.debug("Cleaning up exited containers")
+        subprocess.run(
+            ["podman", "container", "prune", "-f"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -249,8 +257,11 @@ class PodmanPythonCoder(ForgeActor):
                         )
 
                     # Execute the code inside the container with 30 second timeout and retry logic
+                    # CRITICAL: Track process to kill it on timeout
+                    exec_proc = None
                     try:
-                        result = self._run_subprocess_with_retry(
+                        # Start the process without waiting, so we can kill it on timeout
+                        exec_proc = subprocess.Popen(
                             [
                                 "podman",
                                 "exec",
@@ -258,11 +269,13 @@ class PodmanPythonCoder(ForgeActor):
                                 "python3",
                                 container_script_path,
                             ],
-                            max_retries=3,
-                            timeout=30,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
                         )
-                        output = result.stdout
-                        error = result.stderr
+
+                        # Wait for completion with timeout
+                        output, error = exec_proc.communicate(timeout=30)
 
                         # Check for container state errors in stderr
                         if error and any(
@@ -280,6 +293,51 @@ class PodmanPythonCoder(ForgeActor):
                         logging.warning(
                             f"Code execution timed out after 30 seconds (execution_id={execution_id})"
                         )
+
+                        # CRITICAL FIX: Kill the timed-out process
+                        if exec_proc:
+                            logging.warning(
+                                f"Killing timed-out podman exec process (PID={exec_proc.pid})"
+                            )
+                            try:
+                                exec_proc.kill()
+                                exec_proc.wait(timeout=2)
+                            except Exception as kill_error:
+                                logging.error(f"Failed to kill process: {kill_error}")
+
+                        # Kill ALL python3 processes running this specific script inside container
+                        # This ensures the zombie process inside the container is killed
+                        logging.warning(
+                            f"Killing zombie python3 processes for {script_name}"
+                        )
+                        try:
+                            kill_result = subprocess.run(
+                                [
+                                    "podman",
+                                    "exec",
+                                    self.container_name,
+                                    "pkill",
+                                    "-9",
+                                    "-f",
+                                    script_name,
+                                ],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                timeout=5,
+                            )
+                            if kill_result.returncode == 0:
+                                logging.info(
+                                    f"Successfully killed zombie process for {script_name}"
+                                )
+                            else:
+                                logging.warning(
+                                    f"pkill returned {kill_result.returncode}: {kill_result.stderr}"
+                                )
+                        except Exception as kill_error:
+                            logging.error(
+                                f"Failed to kill zombie process: {kill_error}"
+                            )
+
                         output = ""
                         error = "Error: Code execution timed out after 30 seconds (possible infinite loop)"
                     finally:
@@ -365,11 +423,94 @@ class PodmanPythonCoder(ForgeActor):
         return await loop.run_in_executor(self._executor, self._execute_sync, code)
 
     @endpoint
+    async def cleanup_zombie_processes(self) -> int:
+        """Kill any zombie python3 processes in the container that might be consuming memory.
+
+        Returns:
+            Number of processes killed
+        """
+        logging.debug(f"Checking for zombie python3 processes in {self.container_name}")
+
+        try:
+            # Get list of all python3 processes except PID 1
+            ps_result = subprocess.run(
+                [
+                    "podman",
+                    "exec",
+                    self.container_name,
+                    "sh",
+                    "-c",
+                    "ps aux | grep 'python3 /tmp/script_' | grep -v grep | awk '{print $2}'",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5,
+            )
+
+            if ps_result.returncode == 0 and ps_result.stdout.strip():
+                pids = ps_result.stdout.strip().split("\n")
+                pid_count = len(pids)
+                logging.warning(
+                    f"Found {pid_count} zombie python3 processes in container, killing them"
+                )
+
+                # Kill all zombie processes at once
+                kill_result = subprocess.run(
+                    [
+                        "podman",
+                        "exec",
+                        self.container_name,
+                        "pkill",
+                        "-9",
+                        "-f",
+                        "python3 /tmp/script_",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
+                )
+
+                if kill_result.returncode == 0:
+                    logging.info(f"Successfully killed {pid_count} zombie processes")
+                    return pid_count
+                else:
+                    logging.warning(
+                        f"pkill returned {kill_result.returncode}: {kill_result.stderr}"
+                    )
+                    return 0
+            else:
+                logging.debug("No zombie processes found")
+                return 0
+
+        except Exception as e:
+            logging.error(f"Error during zombie process cleanup: {e}")
+            return 0
+
+    @endpoint
     async def shutdown(self):
-        """Cleanup resources - shutdown thread pool executor."""
+        """Cleanup resources - shutdown thread pool executor and remove container."""
         logging.debug("Shutting down PodmanPythonCoder thread pool")
         try:
             self._executor.shutdown(wait=True, cancel_futures=False)
             logging.info("Thread pool executor shutdown successfully")
         except Exception as e:
             logging.error(f"Error during thread pool shutdown: {e}")
+
+        # CRITICAL: Remove the container to prevent memory leaks
+        logging.debug(f"Removing container {self.container_name}")
+        try:
+            result = subprocess.run(
+                ["podman", "rm", "-f", self.container_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                logging.info(f"Successfully removed container {self.container_name}")
+            else:
+                logging.warning(f"Failed to remove container: {result.stderr}")
+        except Exception as e:
+            logging.error(f"Error removing container during shutdown: {e}")

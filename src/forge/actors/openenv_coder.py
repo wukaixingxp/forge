@@ -367,10 +367,104 @@ class OpenEnvCoder(ForgeActor):
         raise RuntimeError("Execution failed after all retry attempts")
 
     @endpoint
+    async def cleanup_zombie_processes(self) -> int:
+        """Kill any zombie python processes in the Docker container that might be consuming memory.
+
+        Returns:
+            Number of processes killed
+        """
+        if not self.client:
+            logging.warning("Client not initialized, cannot cleanup zombie processes")
+            return 0
+
+        try:
+            import subprocess
+
+            # Get container name from the client's container attribute
+            container_name = getattr(self.client, "_container_name", None)
+            if not container_name:
+                logging.warning("Could not determine container name for zombie cleanup")
+                return 0
+
+            logging.debug(
+                f"Checking for zombie python processes in container {container_name}"
+            )
+
+            # Find all python processes in the container (excluding the main server process)
+            ps_result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    container_name,
+                    "sh",
+                    "-c",
+                    "ps aux | grep python | grep -v 'uvicorn\\|grep' | awk '{print $2}'",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5,
+            )
+
+            if ps_result.returncode == 0 and ps_result.stdout.strip():
+                pids = [pid for pid in ps_result.stdout.strip().split("\n") if pid]
+                if len(pids) > 1:  # More than just the main process
+                    pid_count = len(pids) - 1  # Exclude main server process
+                    logging.warning(
+                        f"Found {pid_count} potential zombie python processes in container, killing them"
+                    )
+
+                    # Kill zombie processes
+                    for pid in pids[1:]:  # Skip first PID (main server)
+                        subprocess.run(
+                            [
+                                "docker",
+                                "exec",
+                                container_name,
+                                "kill",
+                                "-9",
+                                pid,
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            timeout=2,
+                        )
+
+                    logging.info(f"Successfully killed {pid_count} zombie processes")
+                    record_metric(
+                        "container/zombie_processes_killed", pid_count, Reduce.SUM
+                    )
+                    return pid_count
+                else:
+                    logging.debug(
+                        "No zombie processes found (only main server process)"
+                    )
+                    return 0
+            else:
+                logging.debug("No zombie processes found")
+                return 0
+
+        except Exception as e:
+            logging.error(f"Error during zombie process cleanup: {e}")
+            return 0
+
+    @endpoint
     async def teardown(self):
         """Cleans up the environment and stops the container."""
         if self.client:
             logging.debug("Closing OpenEnv client and stopping container.")
+
+            # CRITICAL: Clean up any zombie processes before closing
+            try:
+                killed_count = await self.cleanup_zombie_processes()
+                if killed_count > 0:
+                    logging.info(
+                        f"Cleaned up {killed_count} zombie processes before teardown"
+                    )
+            except Exception as e:
+                logging.error(f"Error cleaning zombie processes during teardown: {e}")
+
+            # Close the client which stops and removes the container
             self.client.close()
             self.client = None
             logging.debug("Cleanup complete.")
