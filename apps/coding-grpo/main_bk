@@ -181,7 +181,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.01,
+    beta: float = 0.0,
 ) -> torch.Tensor:
     """
     GRPO Loss Function for on-policy samples with numerical stability improvements
@@ -367,53 +367,37 @@ class DatasetActor(ForgeActor):
     def setup(self):
         self._tokenizer = get_tokenizer(self.model)
 
-        #         def get_coding_system_prompt():
-        #             """Get system prompt for coding tasks."""
-        #             return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
-
-        # Given a problem description, write a Python function that solves it following these guidelines:
-
-        # **CODE REQUIREMENTS:**
-        # 1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
-        # 2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
-        # 3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
-        # 4. **Ensure correctness**: Your solution should be robust and handle all requirements
-
-        # **ALLOWED STANDARD LIBRARY IMPORTS:**
-        # - Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
-        # - Data: json, csv, struct, base64, dataclasses, copy, heapq, enum
-        # - Strings: string, ast, unicodedata
-        # - Advanced: abc, contextlib, inspect, secrets, uuid, pathlib, io
-        # - Async/Threading: threading, asyncio, concurrent.futures
-        # - Network: socket, urllib.parse
-
-        # **FORMAT YOUR RESPONSE AS:**
-
-        # ```python
-        # def function_name(parameters):
-        #     \"\"\"Comprehensive docstring explaining the function.\"\"\"
-        #     # Implementation here
-        #     pass
-        # ```
-
-        # Provide the final, working solution. Focus on correctness, readability, and efficiency."""
         def get_coding_system_prompt():
             """Get system prompt for coding tasks."""
-            return """A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>.
+            return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
 
-Format your response as:
-<think>
-[Your detailed reasoning, analysis, and planning here]
-</think>
-<answer>
+Given a problem description, write a Python function that solves it following these guidelines:
+
+**CODE REQUIREMENTS:**
+1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
+2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
+3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
+4. **Ensure correctness**: Your solution should be robust and handle all requirements
+
+
+**ALLOWED STANDARD LIBRARY IMPORTS:**
+- Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
+- Data: json, csv, struct, base64, dataclasses, copy, heapq, enum
+- Strings: string, ast, unicodedata
+- Advanced: abc, contextlib, inspect, secrets, uuid, pathlib, io
+- Async/Threading: threading, asyncio, concurrent.futures
+- Network: socket, urllib.parse
+
+**FORMAT YOUR RESPONSE AS:**
+
 ```python
 def function_name(parameters):
     \"\"\"Comprehensive docstring explaining the function.\"\"\"
-    # Implementation
+    # Implementation here
     pass
 ```
-</answer>
-"""
+
+Provide the final, working solution. Focus on correctness, readability, and efficiency."""
 
         def transform_sample(sample):
             # AceCode format with OSS filtering
@@ -543,7 +527,7 @@ async def main(cfg: DictConfig):
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
-    thinking_reward = ThinkingReward()
+    # thinking_reward = ThinkingReward()
 
     (
         dataloader,
@@ -565,7 +549,7 @@ async def main(cfg: DictConfig):
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
         ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
         RewardActor.options(**cfg.services.reward_actor).as_service(
-            reward_functions=[ground_truth_reward, thinking_reward]
+            reward_functions=[ground_truth_reward]
         ),
     )
 

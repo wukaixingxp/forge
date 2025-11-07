@@ -410,24 +410,6 @@ Then write a Python function that solves the problem following these guidelines:
 4. Use only standard library imports unless specified otherwise
 5. Ensure your solution is correct and robust
 
-**CRITICAL RESTRICTIONS (Your code WILL FAIL if you violate these):**
-
-**FORBIDDEN KEYWORDS:**
-- NO `global` keyword (use function parameters/returns instead)
-- NO `yield` keyword (no generators, use lists instead)
-- NO `nonlocal` keyword (restructure your code to avoid it)
-
-**FORBIDDEN OPERATIONS:**
-- NO dunder attributes: `__dict__`, `__name__`, `__code__`, etc.
-- NO dunder methods: `__contains__()`, etc. (use `in` operator instead)
-- NO `input()` function (all inputs come from function parameters)
-- NO `locals()` or `globals()` functions
-- NO nested class definitions
-
-**FILE OPERATIONS:**
-- Use `pathlib` for file paths, NOT `os.path`
-- Example: `from pathlib import Path; p = Path('/path/to/file')`
-
 **ALLOWED STANDARD LIBRARY IMPORTS:**
 - Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
 - Data: json, csv, struct, base64, dataclasses, copy, heapq, enum

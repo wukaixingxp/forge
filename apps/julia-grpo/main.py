@@ -171,7 +171,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.0,
+    beta: float = 0.005,
 ) -> torch.Tensor:
     """
     GRPO Loss Function for on-policy samples with numerical stability improvements
@@ -347,7 +347,7 @@ class ComputeAdvantages(ForgeActor):
 class DatasetActor(ForgeActor):
     """Actor wrapper for Julia dataset to provide async interface."""
 
-    path: str = "/home/kaiwu/work/julia_trainset.parquet"
+    path: str = "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
     revision: str = "main"
     data_split: str = "train"
     streaming: bool = False
@@ -378,19 +378,22 @@ Rules:
 - take care of object types and mind that spaces matter in julia so cannot add random spaces
 
 Passing tests and clean, compilable code are rewarded. Hardcoding or failing tests is penalized.
+FORMAT YOUR RESPONSE AS:
 
-Test Reference (for context only, do not include in the output):
-{julia_test}
-
-Code:""".strip()
+```julia
+function <function_name>(<argument_list>)
+    <function_body>
+end
+```
+""".strip()
 
         def transform_sample(sample):
             # Julia dataset format
             if not sample.get("julia_test") or not sample.get("first_test_case"):
                 return None
 
-            julia_test = sample.get("first_test_case", "")
-            system_prompt = get_julia_code_gen_prompt().format(julia_test=julia_test)
+            #julia_test = sample.get("first_test_case", "")
+            system_prompt = get_julia_code_gen_prompt()
             request: str = sample.get("julia_prompt", "")
 
             as_chat = [
@@ -421,7 +424,7 @@ Code:""".strip()
             df = pd.read_parquet(self.path)
             df = df[["julia_prompt", "julia_test", "first_test_case", "task_id"]]
             ds = load_dataset(
-                "arrow",
+                "parquet",
                 data_files={"train": self.path},
                 split=self.data_split,
             )
@@ -506,7 +509,7 @@ async def main(cfg: DictConfig):
     from forge.actors.julia_env_reward import JuliaEnvReward
 
     julia_env_reward = JuliaEnvReward(
-        base_url="http://localhost:8000",  # Docker container running JuliaEnv
+        base_url="http://0.0.0.0:8000",  # Docker container running JuliaEnv
         request_timeout_s=60.0,  # Increased timeout for Julia code execution
     )
 

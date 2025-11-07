@@ -60,7 +60,7 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 5e-6  # ✅ REDUCED from 5e-5 to 5e-6 to prevent rapid policy divergence and reward collapse
+    lr: 1e-6  # ✅ REDUCED from 5e-5 to 5e-6 to prevent rapid policy divergence and reward collapse
     eps: 1e-8  # ✅ FIXED: Changed from 1e-9 to 1e-8 for better numerical stability
   lr_scheduler:
     warmup_steps: 1
@@ -69,7 +69,7 @@ trainer:
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}  # seq_len >= max_req_tokens + max_res_tokens
     max_norm: 1.0
     steps: 1500
-    dtype: float16
+    dtype: bfloat16
     gc_freq: 1
   compile:
     enable: false
@@ -107,7 +107,7 @@ ref_model:
     hf_assets_path: hf://${model}
   training:
     seq_len: ${trainer.training.seq_len}
-    dtype: float16
+    dtype: bfloat16
     gc_freq: 1
   compile:
     enable: false

@@ -79,8 +79,10 @@ class JuliaEnvReward:
                 step_response = requests.post(
                     f"{self.base_url}/step",
                     json={
-                        "core_code": core_code,
-                        "test_code": test_code,
+                        "action": {
+                            "core_code": core_code,
+                            "test_code": test_code,
+                        }
                     },
                     timeout=self.request_timeout_s,
                 )

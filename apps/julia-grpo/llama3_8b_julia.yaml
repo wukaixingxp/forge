@@ -2,12 +2,12 @@
 # >>> python -m apps.julia-grpo.main --config apps/julia-grpo/llama3_8b_julia.yaml
 
 # Global configuration
-group_size: 2  # num_generations from unsloth.py
+group_size: 8  # num_generations from unsloth.py
 batch_size: 1   # per_device_train_batch_size from unsloth.py
 max_req_tokens: 2048  # max_prompt_length from unsloth.py
 max_res_tokens: 1024  # max_completion_length from unsloth.py
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 1 # Off by one by default
+off_by_n: 0 # Off by one by default
 
 # Main loop configuration
 rollout_threads: 1   # Single thread for Julia code generation
@@ -26,7 +26,7 @@ metric_logging:
 
 # Dataset configuration
 dataset:
-  path: "/home/kaiwu/work/julia_trainset.parquet"
+  path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
   revision: "main"
   data_split: "train"
   streaming: false
@@ -58,7 +58,7 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 5e-5  # learning_rate from unsloth.py
+    lr: 1e-5  # learning_rate from unsloth.py
     eps: 1e-8
     weight_decay: 0.01  # weight_decay from unsloth.py
   lr_scheduler:
@@ -82,11 +82,11 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "checkpoint_llama3_8b_julia"
+    folder: "checkpoint_llama3_8b_julia1105"
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 250  # save_steps from unsloth.py
+    interval: 100  # save_steps from unsloth.py
     async_mode: "disabled"
   activation_checkpoint:
     mode: selective
