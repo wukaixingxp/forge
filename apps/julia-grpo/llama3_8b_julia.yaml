@@ -1,0 +1,171 @@
+# Grouped Relative Policy Optimization (GRPO) for Julia Code Generation with GenericOpenEnvActor
+# >>> python -m apps.julia-grpo.main --config apps/julia-grpo/llama3_8b_julia.yaml
+
+# Global configuration
+group_size: 8  # num_generations from unsloth.py
+batch_size: 1   # per_device_train_batch_size from unsloth.py
+max_req_tokens: 2048  # max_prompt_length from unsloth.py
+max_res_tokens: 1024  # max_completion_length from unsloth.py
+model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+off_by_n: 0 # Off by one by default
+
+# Main loop configuration
+rollout_threads: 1   # Single thread for Julia code generation
+
+
+# Observability configuration
+metric_logging:
+  wandb:
+    entity: "torchforge"
+    project: "kaiwu-general-grpo"
+    logging_mode: global_reduce
+  console:
+    logging_mode: global_reduce
+    log_per_rank: True  # Enable per-rank logging to see actor-specific logs
+
+
+# Dataset configuration
+dataset:
+  path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
+  revision: "main"
+  data_split: "train"
+  streaming: false
+  model: ${model}
+
+# OpenEnv configuration for GenericOpenEnvActor
+openenv_config:
+  docker_image: "julia-env:latest"  # Docker image with Julia runtime
+  env_vars: {}  # Additional environment variables if needed
+  container_timeout_s: 180.0  # Timeout for container operations
+  request_timeout_s: 120.0  # Timeout for code execution requests
+  container_memory_gb: 4  # Memory limit for containers
+
+# Policy configuration
+policy:
+  engine_args:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/engine/arg_utils.html#vllm.engine.arg_utils.EngineArgs
+    model: ${model}
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    enforce_eager: false
+    gpu_memory_utilization: 0.85  # Reduced from 0.85 to leave more memory for trainer
+    max_model_len: 8192
+    enable_chunked_prefill: true
+    max_num_batched_tokens: 8192
+    max_num_seqs: 32  # Reduced from 24 to reduce memory pressure
+  sampling_params:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/sampling_params.html#vllm.sampling_params.SamplingParams
+    n: ${group_size}
+    max_tokens: ${max_res_tokens}
+    temperature: 1.0  # temperature from unsloth.py
+    top_p: 1.0
+
+# Trainer configuration
+trainer:
+  model:
+    name: llama3
+    flavor: 8B
+    hf_assets_path: hf://${model}
+  optimizer:
+    name: AdamW
+    lr: 1e-5  # learning_rate from unsloth.py
+    eps: 1e-8
+    weight_decay: 0.01  # weight_decay from unsloth.py
+  lr_scheduler:
+    warmup_steps: 50  # warmup_ratio=0.1 * max_steps=500 from unsloth.py
+  training:
+    local_batch_size: ${batch_size}
+    seq_len: ${sum:${max_req_tokens},${max_res_tokens}}  # seq_len >= max_req_tokens + max_res_tokens
+    max_norm: 1.0
+    steps: 500  # max_steps from unsloth.py
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: false
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+    disable_loss_parallel: true
+  checkpoint:
+    enable: true
+    folder: "checkpoint_llama3_8b_julia1107"
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+    last_save_in_hf: true
+    interval: 100  # save_steps from unsloth.py
+    async_mode: "disabled"
+  activation_checkpoint:
+    mode: selective
+    selective_ac_option: op
+
+# Replay buffer configuration
+replay_buffer:
+  batch_size: ${batch_size}
+  max_policy_age: ${off_by_n}
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree} # Must equal trainer DP degree
+
+# Reference model configuration
+ref_model:
+  model:
+    name: llama3
+    flavor: 8B
+    hf_assets_path: hf://${model}
+  training:
+    seq_len: ${trainer.training.seq_len}
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: false
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+  checkpoint:
+    enable: true
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+
+# All resource allocations
+services:
+  policy:
+    procs: ${policy.engine_args.tensor_parallel_size}
+    num_replicas: 1
+    mesh_name: policy
+    with_gpus: true
+  ref_model:
+    procs: 1
+    num_replicas: 1
+    mesh_name: ref_model
+    with_gpus: true
+  reward_actor:
+    procs: 1
+    num_replicas: 1
+    mesh_name: reward_actor
+    with_gpus: false
+
+actors:
+  dataset:
+    procs: 1
+    with_gpus: false
+    mesh_name: dataset
+  trainer:
+    procs: 1
+    with_gpus: true
+    mesh_name: trainer
+  replay_buffer:
+    procs: 1
+    with_gpus: false
+    mesh_name: replay_buffer
+  compute_advantages:
+    procs: 1
+    with_gpus: false
+    mesh_name: compute_advantages
+  julia_env:
+    procs: 1
+    with_gpus: false
+    mesh_name: julia_env
