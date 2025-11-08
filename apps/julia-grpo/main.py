@@ -82,6 +82,43 @@ Group = list[Episode]
 Policy = Generator
 
 
+# def collate(
+#     batches: list[Group],
+# ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+#     """
+#     Collates a list of batches into a single batch of inputs and targets.
+#     Each batch is a list of episodes, and each episode is a dict of tensors.
+#     """
+#     inputs = []
+#     targets = []
+#     for batch in batches:
+#         request = [e.request_tensor for e in batch]
+#         request = torch.stack(request)  # [b x s]
+
+#         response = [e.response_tensor for e in batch]
+#         response = torch.stack(response)  # [b x s]
+
+#         ref_logprobs = [e.ref_logprobs for e in batch]
+#         ref_logprobs = torch.stack(ref_logprobs).squeeze()  # [b x s]
+
+#         advantages = [e.advantage for e in batch]
+#         advantages = torch.tensor(advantages).unsqueeze(-1)  # [b x 1]
+
+#         pad_id = batch[0].pad_id
+#         mask = torch.ne(response, pad_id)
+
+#         input = {"tokens": torch.cat([request, response], dim=1)}
+#         target = {
+#             "response": response,
+#             "ref_logprobs": ref_logprobs,
+#             "advantages": advantages,
+#             "padding_mask": mask,
+#         }
+#         inputs.append(input)
+#         targets.append(target)
+#     return inputs, targets
+
+
 def collate(
     batches: list[Group],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -91,21 +128,60 @@ def collate(
     """
     inputs = []
     targets = []
-    for batch in batches:
+    for batch_idx, batch in enumerate(batches):
+        print(f"[DEBUG] Processing batch {batch_idx}, len={len(batch)}")
+
         request = [e.request_tensor for e in batch]
         request = torch.stack(request)  # [b x s]
+        print(f"[DEBUG] request shape: {request.shape}")
 
         response = [e.response_tensor for e in batch]
         response = torch.stack(response)  # [b x s]
+        print(f"[DEBUG] response shape: {response.shape}")
 
         ref_logprobs = [e.ref_logprobs for e in batch]
-        ref_logprobs = torch.stack(ref_logprobs).squeeze()  # [b x s]
+        ref_logprobs = torch.stack(ref_logprobs)  # [b x s]
+
+        # Only squeeze the first dimension if it exists and is size 1
+        # This prevents squeezing the sequence dimension
+        if ref_logprobs.dim() > 2:
+            ref_logprobs = ref_logprobs.squeeze(0)
+        print(f"[DEBUG] ref_logprobs shape after stack: {ref_logprobs.shape}")
 
         advantages = [e.advantage for e in batch]
         advantages = torch.tensor(advantages).unsqueeze(-1)  # [b x 1]
+        print(f"[DEBUG] advantages shape: {advantages.shape}")
 
         pad_id = batch[0].pad_id
-        mask = response != pad_id
+
+        # Ensure mask is always a 2D tensor [b x s], even for single batch elements
+        mask = torch.ne(response, pad_id)  # Should be [b x s]
+        print(
+            f"[DEBUG] mask shape before checks: {mask.shape}, dtype: {mask.dtype}, type: {type(mask)}"
+        )
+
+        # Ensure it's a tensor and preserve shape
+        if not isinstance(mask, torch.Tensor):
+            print(
+                f"[DEBUG] WARNING: mask is not a tensor, converting from {type(mask)}"
+            )
+            mask = torch.tensor(mask, dtype=torch.bool)
+
+        # Ensure mask is always 2D
+        if mask.dim() == 0:
+            print(f"[DEBUG] WARNING: mask is 0D scalar, unsqueezing twice")
+            mask = mask.unsqueeze(0).unsqueeze(0)
+        elif mask.dim() == 1:
+            print(
+                f"[DEBUG] WARNING: mask is 1D with shape {mask.shape}, unsqueezing to 2D"
+            )
+            mask = mask.unsqueeze(0)
+
+        print(f"[DEBUG] mask final shape: {mask.shape}")
+        print(
+            f"[DEBUG] All shapes - request: {request.shape}, response: {response.shape}, "
+            f"ref_logprobs: {ref_logprobs.shape}, advantages: {advantages.shape}, mask: {mask.shape}"
+        )
 
         input = {"tokens": torch.cat([request, response], dim=1)}
         target = {
@@ -116,6 +192,7 @@ def collate(
         }
         inputs.append(input)
         targets.append(target)
+
     return inputs, targets
 
 
@@ -125,7 +202,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.1,
+    beta: float = 0.005,
 ) -> torch.Tensor:
     logprobs: torch.Tensor = compute_logprobs(logits, response)
     kl = torch.exp(ref_logprobs - logprobs) - (ref_logprobs - logprobs) - 1
@@ -140,83 +217,120 @@ def simple_grpo_loss(
 
 @dataclass
 class JuliaRewardActor(ForgeActor):
-    """Reward actor for Julia code execution using GenericOpenEnvActor."""
+    """Reward actor for Julia code execution using GenericOpenEnvActor.
+
+    Uses a dense reward structure:
+    - 0.0: Code failed to execute or tests failed
+    - reward > 0.0: Reward based on test success rate
+    - 1.0: All tests passed
+    """
 
     julia_env: GenericOpenEnvActor
 
     @endpoint
-    async def evaluate_response(
-        self, prompt: str, response: str, target: dict
-    ) -> float:
+    async def evaluate_response(self, prompt: str, response: str, target: str) -> float:
         """
         Evaluate Julia code by executing it with test cases.
 
         Args:
             prompt: The problem description (not used directly, but available)
             response: The Julia code to evaluate
-            target: Dict containing test cases and expected outputs
+            target: The Julia test code as a string
 
         Returns:
             Reward score based on test case pass rate
         """
+        reward = 0.0
+
+        print("=" * 80)
+        print("RAW RESPONSE FROM MODEL:")
+        print("-" * 80)
+        print(response)
+        print("-" * 80)
+
         try:
             # Extract code from markdown code blocks if present
             code = self._extract_code(response)
 
-            # Get test cases from target
-            test_cases = target.get("test_cases", [])
-            if not test_cases:
-                record_metric("reward/julia/no_test_cases", 1, Reduce.SUM)
+            if not code:
+                print("No Julia code extracted - Reward: 0.0")
+                print("=" * 80)
+                record_metric("reward/julia/no_code_extracted", 1, Reduce.SUM)
                 return 0.0
 
-            # Execute code with test cases using JuliaAction
+            print("EXTRACTED JULIA CODE:")
+            print("-" * 80)
+            print(code)
+            print("-" * 80)
+
+            # Use target as the test code directly
+            if not target or not isinstance(target, str):
+                print("No test code provided - Reward: 0.0")
+                print("=" * 80)
+                record_metric("reward/julia/no_test_code", 1, Reduce.SUM)
+                return 0.0
+
+            # Execute code with test code using JuliaAction
+            # The test code is the complete Julia test suite
             action = JuliaAction(
-                code=code,
-                test_cases=test_cases,
+                core_code=code,
+                test_code=target,
             )
 
-            result = await self.julia_env.execute.route(action)
+            result = await self.julia_env.execute.call_one(action)
 
-            # Calculate reward based on test results
+            # Extract reward from result
+            reward = result.reward if result.reward is not None else 0.0
             obs = result.observation
-            passed = obs.tests_passed
-            total = obs.tests_total
 
-            if total == 0:
-                reward = 0.0
-            else:
-                # Pass rate as reward (0.0 to 1.0)
-                reward = passed / total
+            passed = obs.tests_passed
+            failed = obs.tests_failed
+            total = passed + failed
+
+            # Log execution details
+            print("JuliaEnv Execution Result:")
+            print(f"  Reward: {reward:.3f}")
+            print(f"  Tests Passed: {passed}")
+            print(f"  Tests Failed: {failed}")
+            print(f"  Total Tests: {total}")
+
+            if obs.stderr:
+                print(f"  Stderr: {obs.stderr[:200]}")
+                record_metric("reward/julia/has_errors", 1, Reduce.SUM)
+
+            if obs.error_message:
+                print(f"  Error Message: {obs.error_message[:200]}")
 
             # Log metrics
             record_metric("reward/julia/tests_passed", passed, Reduce.SUM)
+            record_metric("reward/julia/tests_failed", failed, Reduce.SUM)
             record_metric("reward/julia/tests_total", total, Reduce.SUM)
             record_metric("reward/julia/pass_rate", reward, Reduce.MEAN)
 
-            if obs.stderr:
-                record_metric("reward/julia/has_errors", 1, Reduce.SUM)
+            print(f"Final Reward: {reward:.3f}")
+            print("=" * 80)
 
             return reward
 
+        except asyncio.TimeoutError:
+            print("✗ JuliaEnv request timeout - Reward: 0.0")
+            print("=" * 80)
+            record_metric("reward/julia/timeout_errors", 1, Reduce.SUM)
+            return 0.0
         except Exception as e:
-            print(f"Error evaluating Julia response: {e}")
+            print(f"✗ Unexpected error: {e} - Reward: 0.0")
+            print("=" * 80)
             record_metric("reward/julia/evaluation_errors", 1, Reduce.SUM)
             return 0.0
 
     def _extract_code(self, response: str) -> str:
-        """Extract Julia code from markdown code blocks."""
-        # Remove markdown code fences if present
-        if "```julia" in response:
-            start = response.find("```julia") + len("```julia")
-            end = response.find("```", start)
-            if end != -1:
-                return response[start:end].strip()
-        elif "```" in response:
-            start = response.find("```") + len("```")
-            end = response.find("```", start)
-            if end != -1:
-                return response[start:end].strip()
-        return response.strip()
+        """Extract Julia code from markdown code blocks using regex."""
+        import re
+
+        # Remove markdown code blocks with regex (more robust)
+        text = re.sub(r"^```julia\s*\n?", "", response, flags=re.IGNORECASE)
+        text = re.sub(r"\n?```\s*$", "", text)
+        return text.strip()
 
 
 @dataclass
@@ -349,7 +463,12 @@ end
 
     @endpoint
     async def pad_token(self):
-        return self._tokenizer.pad_token_id
+        # Use pad_token_id if available, otherwise use eos_token_id
+        # Llama models don't have a pad token by default
+        if self._tokenizer.pad_token_id is not None:
+            return self._tokenizer.pad_token_id
+        else:
+            return self._tokenizer.eos_token_id
 
 
 async def drop_weights(version: int):
