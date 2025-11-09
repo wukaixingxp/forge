@@ -1,0 +1,180 @@
+# Grouped Relative Policy Optimization (GRPO) for Julia Code Generation
+# Using Generic OpenEnv Framework
+# >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
+
+# Global configuration
+group_size: 16
+batch_size: 4
+max_req_tokens: 1024
+max_res_tokens: 2048
+model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+off_by_n: 2
+
+# Main loop configuration
+rollout_threads: 1
+
+# Task-specific configuration
+task:
+  env_name: "julia"  # Used to load JuliaEnv and JuliaAction via AutoEnv
+  build_action: !function julia_utils.build_julia_action
+  evaluate_response: !function julia_utils.evaluate_julia_response
+  transform_sample: !function julia_utils.transform_julia_sample
+
+# Observability configuration
+metric_logging:
+  wandb:
+    entity: "torchforge"
+    project: "kaiwu-general-grpo"
+    logging_mode: global_reduce
+  console:
+    logging_mode: global_reduce
+    log_per_rank: True
+
+# Dataset configuration
+dataset:
+  path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
+  revision: "main"
+  data_split: "train"
+  streaming: false
+  model: ${model}
+
+# OpenEnv configuration for GenericOpenEnvActor
+openenv_config:
+  docker_image: "julia-env:latest"
+  env_vars: {}
+  container_timeout_s: 180.0
+  request_timeout_s: 120.0
+  container_memory_gb: 128
+  port: 8000
+  num_worker: 8
+  julia_max_workers: 16
+
+# Policy configuration
+policy:
+  engine_args:
+    model: ${model}
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    enforce_eager: false
+    gpu_memory_utilization: 0.85
+    max_model_len: 8192
+    enable_chunked_prefill: true
+    max_num_batched_tokens: 8192
+    max_num_seqs: 32
+  sampling_params:
+    n: ${group_size}
+    max_tokens: ${max_res_tokens}
+    temperature: 1.0
+    top_p: 1.0
+
+# Trainer configuration
+trainer:
+  model:
+    name: llama3
+    flavor: 8B
+    hf_assets_path: hf://${model}
+  optimizer:
+    name: AdamW
+    lr: 5e-6
+    eps: 1e-8
+    weight_decay: 0.01
+  lr_scheduler:
+    warmup_steps: 0
+  training:
+    local_batch_size: ${batch_size}
+    seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
+    max_norm: 1.0
+    steps: 3000
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: false
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+    disable_loss_parallel: true
+  checkpoint:
+    enable: true
+    folder: "checkpoint_llama3_8b_julia_openenv"
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+    last_save_in_hf: true
+    interval: 150
+    async_mode: "disabled"
+  activation_checkpoint:
+    mode: selective
+    selective_ac_option: op
+
+# Replay buffer configuration
+replay_buffer:
+  batch_size: ${batch_size}
+  max_policy_age: ${off_by_n}
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
+
+# Reference model configuration
+ref_model:
+  model:
+    name: llama3
+    flavor: 8B
+    hf_assets_path: hf://${model}
+  training:
+    seq_len: ${trainer.training.seq_len}
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: false
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+  checkpoint:
+    enable: true
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+
+# All resource allocations
+services:
+  policy:
+    procs: ${policy.engine_args.tensor_parallel_size}
+    num_replicas: 1
+    mesh_name: policy
+    with_gpus: true
+  ref_model:
+    procs: 1
+    num_replicas: 1
+    mesh_name: ref_model
+    with_gpus: true
+  reward_actor:
+    procs: 1
+    num_replicas: 1
+    mesh_name: reward_actor
+    with_gpus: false
+
+actors:
+  dataset:
+    procs: 1
+    with_gpus: false
+    mesh_name: dataset
+  trainer:
+    procs: 1
+    with_gpus: true
+    mesh_name: trainer
+  replay_buffer:
+    procs: 1
+    with_gpus: false
+    mesh_name: replay_buffer
+  compute_advantages:
+    procs: 1
+    with_gpus: false
+    mesh_name: compute_advantages
+  julia_env:
+    procs: 1
+    with_gpus: false
+    mesh_name: julia_env
