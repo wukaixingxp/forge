@@ -281,6 +281,7 @@ class JuliaRewardActor(ForgeActor):
 
             # Extract reward from result
             reward = result.reward if result.reward is not None else 0.0
+            record_metric("reward/julia/reward", reward, Reduce.MEAN)
             obs = result.observation
 
             passed = obs.tests_passed
@@ -293,19 +294,20 @@ class JuliaRewardActor(ForgeActor):
             print(f"  Tests Passed: {passed}")
             print(f"  Tests Failed: {failed}")
             print(f"  Total Tests: {total}")
+            print(f"  Exit Code: {obs.exit_code}")
+            print(f"  Code Compiles: {obs.code_compiles}")
 
             if obs.stderr:
-                print(f"  Stderr: {obs.stderr[:200]}")
+                print(f"  Stderr: {obs.stderr[:500]}")
                 record_metric("reward/julia/has_errors", 1, Reduce.SUM)
 
-            if obs.error_message:
-                print(f"  Error Message: {obs.error_message[:200]}")
+            if obs.stdout:
+                print(f"  Stdout (first 200 chars): {obs.stdout[:200]}")
 
             # Log metrics
-            record_metric("reward/julia/tests_passed", passed, Reduce.SUM)
-            record_metric("reward/julia/tests_failed", failed, Reduce.SUM)
-            record_metric("reward/julia/tests_total", total, Reduce.SUM)
-            record_metric("reward/julia/pass_rate", reward, Reduce.MEAN)
+            pass_rate = passed / total if total > 0 else 0.0
+
+            record_metric("reward/julia/pass_rate", pass_rate, Reduce.MEAN)
 
             print(f"Final Reward: {reward:.3f}")
             print("=" * 80)
@@ -337,7 +339,7 @@ class JuliaRewardActor(ForgeActor):
 class ComputeAdvantages(ForgeActor):
     @endpoint
     async def compute(self, group: Group) -> list[float]:
-        rewards = torch.tensor([[e.reward for e in group]])
+        rewards = torch.tensor([[e.reward for e in group]], dtype=torch.float32)
         mean = rewards.mean(1, keepdim=True)
         std = rewards.std(1, keepdim=True)
         advantages = (rewards - mean) / (std + 1e-4)
@@ -517,6 +519,14 @@ async def main(cfg: DictConfig):
     request_timeout_s = openenv_config.get("request_timeout_s", 120.0)
     container_memory_gb = openenv_config.get("container_memory_gb", 4)
 
+    # Set PORT and NUM_WORKER environment variables for the Julia server
+    # These match the Dockerfile defaults
+    if "PORT" not in env_vars:
+        env_vars["PORT"] = str(openenv_config.get("port", 8000))
+    if "NUM_WORKER" not in env_vars:
+        env_vars["NUM_WORKER"] = str(openenv_config.get("num_worker", 4))
+    if "JULIA_MAX_WORKERS" not in env_vars:
+        env_vars["JULIA_MAX_WORKERS"] = str(openenv_config.get("julia_max_workers", 16))
     julia_env_actor = await GenericOpenEnvActor.options(
         **cfg.actors.julia_env
     ).as_actor(
@@ -587,12 +597,14 @@ async def main(cfg: DictConfig):
             responses: list[Completion] = await policy.generate.route(prompt)
             t.step("policy_generation")
 
-            # Construct episodes and calculate rewards
+            # Construct episodes and calculate rewards in parallel
             episodes = []
             input_ids = torch.ones(
                 (group_size, max_req_tokens + max_res_tokens),
                 dtype=torch.long,
             )
+
+            # Create episodes first
             for i, response in enumerate(responses):
                 episode = Episode(
                     episode_id=str(uuid.uuid4()),
@@ -602,12 +614,20 @@ async def main(cfg: DictConfig):
                     target=target,
                     completion=response,
                 )
-                episode.reward = await reward_actor.evaluate_response.route(
-                    prompt=prompt, response=response.text, target=target
-                )
                 episodes.append(episode)
 
-                # Build input_ids for reference logprobs
+            # Evaluate all rewards in parallel
+            reward_tasks = [
+                reward_actor.evaluate_response.route(
+                    prompt=prompt, response=response.text, target=target
+                )
+                for response in responses
+            ]
+            rewards = await asyncio.gather(*reward_tasks)
+
+            # Assign rewards and build input_ids
+            for i, (episode, reward) in enumerate(zip(episodes, rewards)):
+                episode.reward = reward
                 input_ids[i, :max_req_tokens] = episode.request_tensor
                 input_ids[i, max_req_tokens:] = episode.response_tensor
 

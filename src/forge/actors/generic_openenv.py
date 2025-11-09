@@ -12,10 +12,10 @@ from typing import Any, Dict, Generic, Optional, Type, TypeVar
 from core.client_types import StepResult
 from core.env_server.types import Action, Observation
 from core.http_env_client import HTTPEnvClient
-from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
 from forge.observability.metrics import record_metric, Reduce
+from monarch.actor import endpoint
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -117,7 +117,7 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
         container_timeout_s: Timeout for container startup in seconds (default: 180.0).
         request_timeout_s: Timeout for individual requests in seconds (default: 120.0).
         port: Preferred port for the container (default: 8000).
-        container_memory_gb: Memory limit for the container in GB (default: 4GB).
+        container_memory_gb: Memory limit for the container in GB (default: 16GB).
         enable_zombie_cleanup: Whether to enable zombie process cleanup (default: False).
                               Only relevant for code execution environments.
 

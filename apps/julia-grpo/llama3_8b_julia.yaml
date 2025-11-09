@@ -2,12 +2,12 @@
 # >>> python -m apps.julia-grpo.main --config apps/julia-grpo/llama3_8b_julia.yaml
 
 # Global configuration
-group_size: 8  # num_generations from unsloth.py
+group_size: 16  # num_generations from unsloth.py
 batch_size: 4   # per_device_train_batch_size from unsloth.py
-max_req_tokens: 2048  # max_prompt_length from unsloth.py
-max_res_tokens: 1024  # max_completion_length from unsloth.py
+max_req_tokens: 1024  # max_prompt_length from unsloth.py
+max_res_tokens: 2048  # max_completion_length from unsloth.py
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 0 # Off by one by default
+off_by_n: 2 # Off by one by default
 
 # Main loop configuration
 rollout_threads: 1   # Single thread for Julia code generation
@@ -38,7 +38,9 @@ openenv_config:
   env_vars: {}  # Additional environment variables if needed
   container_timeout_s: 180.0  # Timeout for container operations
   request_timeout_s: 120.0  # Timeout for code execution requests
-  container_memory_gb: 4  # Memory limit for containers
+  container_memory_gb: 128  # Memory limit for containers
+  port: 8000          # port for container communication
+  num_worker: 8    # number of workers
 
 # Policy configuration
 policy:
@@ -66,16 +68,16 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 1e-5  # learning_rate from unsloth.py
+    lr: 5e-6  # learning_rate from unsloth.py
     eps: 1e-8
     weight_decay: 0.01  # weight_decay from unsloth.py
   lr_scheduler:
-    warmup_steps: 50  # warmup_ratio=0.1 * max_steps=500 from unsloth.py
+    warmup_steps: 0  # warmup_ratio=0.1 * max_steps=500 from unsloth.py
   training:
     local_batch_size: ${batch_size}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}  # seq_len >= max_req_tokens + max_res_tokens
     max_norm: 1.0
-    steps: 500  # max_steps from unsloth.py
+    steps: 3000  # max_steps from unsloth.py
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -90,11 +92,11 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "checkpoint_llama3_8b_julia1107"
+    folder: "checkpoint_llama3_8b_julia1109"
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
-    interval: 100  # save_steps from unsloth.py
+    interval: 150  # save_steps from unsloth.py
     async_mode: "disabled"
   activation_checkpoint:
     mode: selective
