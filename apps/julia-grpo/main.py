@@ -215,6 +215,75 @@ def simple_grpo_loss(
     return loss
 
 
+def dapo_loss(
+    logits: torch.Tensor,
+    response: torch.Tensor,
+    ref_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    padding_mask: torch.Tensor,
+    beta: float = 0.005,
+    clip_eps_low: float = 0.2,
+    clip_eps_high: float = 0.28,
+) -> torch.Tensor:
+    """
+    DAPO (Direct Alignment Policy Optimization) loss function.
+
+    Implements PPO-style clipped objective with KL divergence penalty.
+    Based on the compute_loss function from old_dapo.py.
+
+    Args:
+        logits: Model output logits [batch_size, seq_len, vocab_size]
+        response: Response token ids [batch_size, seq_len]
+        ref_logprobs: Reference model log probabilities [batch_size, seq_len]
+        advantages: Advantage values [batch_size, 1]
+        padding_mask: Mask for valid tokens [batch_size, seq_len]
+        beta: KL divergence coefficient
+        clip_eps_low: Lower clipping bound for importance sampling ratio
+        clip_eps_high: Upper clipping bound for importance sampling ratio
+
+    Returns:
+        Scalar loss value
+    """
+    # Compute current action log probabilities
+    action_log_probs = compute_logprobs(logits, response)
+
+    # Compute KL divergence term (k3 in DAPO)
+    if beta != 0.0:
+        log_ratio = ref_logprobs - action_log_probs
+        log_ratio = log_ratio * padding_mask
+        k3 = log_ratio.exp() - 1 - log_ratio
+
+    # Use detached log probs as "old" log probs (for single iteration)
+    # In multi-iteration setting, these would be passed as input
+    old_action_log_probs = action_log_probs.detach()
+
+    # Compute importance sampling ratio
+    coef_1 = torch.exp(action_log_probs - old_action_log_probs)
+
+    # Clipped importance sampling ratio
+    coef_2 = torch.clamp(coef_1, 1 - clip_eps_low, 1 + clip_eps_high)
+
+    # Compute per-token losses with advantages
+    # advantages shape: [batch_size, 1], unsqueeze to [batch_size, 1] for broadcasting
+    per_token_loss1 = coef_1 * advantages
+    per_token_loss2 = coef_2 * advantages
+
+    # Take minimum for clipped objective (negative because we minimize)
+    per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+
+    # Apply action mask
+    per_token_loss = per_token_loss * padding_mask
+
+    # Add KL penalty
+    if beta != 0.0:
+        per_token_loss = per_token_loss + beta * k3
+
+    # Average over tokens and batch
+    loss = (per_token_loss.sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)).mean()
+
+    return loss
+
+
 @dataclass
 class JuliaRewardActor(ForgeActor):
     """Reward actor for Julia code execution using GenericOpenEnvActor.
@@ -550,9 +619,7 @@ async def main(cfg: DictConfig):
     ) = await asyncio.gather(
         JuliaDatasetActor.options(**cfg.actors.dataset).as_actor(**cfg.dataset),
         Policy.options(**cfg.services.policy).as_service(**cfg.policy),
-        RLTrainer.options(**cfg.actors.trainer).as_actor(
-            **cfg.trainer, loss=simple_grpo_loss
-        ),
+        RLTrainer.options(**cfg.actors.trainer).as_actor(**cfg.trainer, loss=dapo_loss),
         ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
             **cfg.replay_buffer, collate=collate
         ),

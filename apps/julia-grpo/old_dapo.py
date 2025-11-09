@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -388,9 +394,7 @@ class DapoTrainer:
         coef_2 = torch.clamp(
             coef_1, 1 - self.args.clip_eps_low, 1 + self.args.clip_eps_high
         )
-        per_token_loss1 = coef_1 * advantages.unsqueeze(
-            1
-        )  # 一个序列中每个token的优势是一样的
+        per_token_loss1 = coef_1 * advantages.unsqueeze(1)  # 一个序列中每个token的优势是一样的
         per_token_loss2 = coef_2 * advantages.unsqueeze(1)
         per_token_loss = -torch.min(
             per_token_loss1, per_token_loss2
@@ -518,9 +522,7 @@ class DapoTrainer:
                         if self.update_steps % 10 == 0:
                             print(f"\n第 {self.update_steps} 步: === 开始评估模型 ===")
                             accuracy = self.evaluate(num_samples=100, batch_size=25)
-                            print(
-                                f"第 {self.update_steps} 步: 模型准确率: {accuracy:.2f}"
-                            )
+                            print(f"第 {self.update_steps} 步: 模型准确率: {accuracy:.2f}")
                             # 将accuracy保存到文件中
                             accuracy_file_path = os.path.join(
                                 self.args.output_dir, "accuracy_losses.txt"

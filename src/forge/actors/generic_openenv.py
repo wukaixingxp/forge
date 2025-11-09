@@ -12,10 +12,10 @@ from typing import Any, Dict, Generic, Optional, Type, TypeVar
 from core.client_types import StepResult
 from core.env_server.types import Action, Observation
 from core.http_env_client import HTTPEnvClient
+from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
 from forge.observability.metrics import record_metric, Reduce
-from monarch.actor import endpoint
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
