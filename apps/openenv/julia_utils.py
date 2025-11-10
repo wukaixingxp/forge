@@ -12,7 +12,6 @@ Contains prompt building, action creation, and reward evaluation functions.
 import re
 from typing import Dict, Any
 
-from envs.julia_env import JuliaAction
 from forge.observability.metrics import record_metric, Reduce
 
 
@@ -75,7 +74,7 @@ def build_julia_prompt(sample: Dict[str, Any], tokenizer) -> str:
     return formatted_request
 
 
-def build_julia_action(response: str, sample: Dict[str, Any]) -> JuliaAction:
+def build_julia_action(response: str, sample: Dict[str, Any]):
     """
     Build JuliaAction from model response and dataset sample.
 
@@ -86,6 +85,12 @@ def build_julia_action(response: str, sample: Dict[str, Any]) -> JuliaAction:
     Returns:
         JuliaAction instance with core code and test code
     """
+    # Import AutoAction dynamically to avoid pickle issues
+    from envs import AutoAction
+
+    # Get JuliaAction class dynamically
+    JuliaAction = AutoAction.from_env("julia")
+
     # Extract code from markdown if present
     code = extract_julia_code(response)
 

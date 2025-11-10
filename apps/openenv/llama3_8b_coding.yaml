@@ -16,9 +16,9 @@ rollout_threads: 1
 # Task-specific configuration
 task:
   env_name: "coding"  # Used to load CodingEnv and CodingAction via AutoEnv
-  build_action: !function python_utils.build_python_action
-  evaluate_response: !function python_utils.evaluate_python_response
-  transform_sample: !function python_utils.transform_python_sample
+  build_action: !function apps.openenv.python_utils.build_python_action
+  evaluate_response: !function apps.openenv.python_utils.evaluate_python_response
+  transform_sample: !function apps.openenv.python_utils.transform_python_sample
 
 # Observability configuration
 metric_logging:
@@ -31,13 +31,19 @@ metric_logging:
     log_per_rank: True
 
 # Dataset configuration
+#dataset:
+  # path: "TIGER-Lab/AceCode-87K"
+  # revision: "main"
+  # data_split: "train"
+  # streaming: true
+  # model: ${model}
 dataset:
-  path: "openai/humaneval"  # HumanEval dataset from HuggingFace
+  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/scripts/data/acecode_89k/acecode_hard02.json"
+  #path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/data/acecode_87K/acecode_87K.json"
   revision: "main"
-  data_split: "test"
+  data_split: "train"
   streaming: false
   model: ${model}
-
 # OpenEnv configuration for GenericOpenEnvActor
 openenv_config:
   docker_image: "coding-env:latest"
@@ -80,10 +86,10 @@ trainer:
   lr_scheduler:
     warmup_steps: 0
   training:
-    local_batch_size: ${batch_size}
+    local_batch_size: ${multiply:${batch_size},${group_size}}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
     max_norm: 1.0
-    steps: 2000
+    steps: 100
     dtype: bfloat16
     gc_freq: 1
   compile:

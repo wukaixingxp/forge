@@ -12,7 +12,6 @@ Contains prompt building, action creation, and reward evaluation functions.
 import re
 from typing import Dict, Any
 
-from envs.coding_env import CodingAction
 from forge.observability.metrics import record_metric, Reduce
 
 
@@ -67,7 +66,7 @@ def build_python_prompt(sample: Dict[str, Any], tokenizer) -> str:
     return formatted_request
 
 
-def build_python_action(response: str, sample: Dict[str, Any]) -> CodingAction:
+def build_python_action(response: str, sample: Dict[str, Any]):
     """
     Build CodingAction from model response and dataset sample.
 
@@ -78,6 +77,12 @@ def build_python_action(response: str, sample: Dict[str, Any]) -> CodingAction:
     Returns:
         CodingAction instance with code
     """
+    # Import AutoAction dynamically to avoid pickle issues
+    from envs import AutoAction
+
+    # Get CodingAction class dynamically
+    CodingAction = AutoAction.from_env("coding")
+
     # Extract code from markdown if present
     code = extract_python_code(response)
 

@@ -17,6 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 # Add support for summing lists of numbers, e.g. ${sum:${max_req_tokens},${max_res_tokens}}
 OmegaConf.register_new_resolver("sum", lambda *args: sum(args), replace=True)
+OmegaConf.register_new_resolver("multiply", lambda a, b: a * b, replace=True)
 
 
 def _has_component(node: Any) -> bool:

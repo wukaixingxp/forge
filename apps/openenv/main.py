@@ -22,6 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+# CRITICAL: Add openenv directory to sys.path at module level
+# This ensures that when remote actors unpickle function references (e.g., julia_utils functions),
+# the module can be imported successfully. This must happen BEFORE any actor definitions.
+_openenv_dir = Path(__file__).parent
+if str(_openenv_dir) not in sys.path:
+    sys.path.insert(0, str(_openenv_dir))
+
 import torch
 import torch.nn.functional as F
 import torchstore as ts
@@ -46,7 +53,7 @@ from forge.types import LauncherConfig, ProvisionerConfig
 from forge.util.config import parse
 from forge.util.ops import compute_logprobs
 from monarch.actor import endpoint
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 
@@ -236,6 +243,15 @@ class GenericRewardActor(ForgeActor):
     evaluate_response_fn: Callable
 
     @endpoint
+    def setup(self):
+        """Ensure the openenv directory is in sys.path for imports."""
+        print("[DEBUG GenericRewardActor.setup] Starting setup...")
+        openenv_dir = Path(__file__).parent
+        if str(openenv_dir) not in sys.path:
+            sys.path.insert(0, str(openenv_dir))
+        print("[DEBUG GenericRewardActor.setup] Setup complete!")
+
+    @endpoint
     async def evaluate_response(self, prompt: str, response: str, target: Any) -> float:
         """
         Evaluate response using task-specific functions.
@@ -275,6 +291,10 @@ class GenericRewardActor(ForgeActor):
 @dataclass
 class ComputeAdvantages(ForgeActor):
     @endpoint
+    def setup(self):
+        print("[DEBUG ComputeAdvantages.setup] Setup complete!")
+
+    @endpoint
     async def compute(self, group: Group) -> list[float]:
         rewards = torch.tensor([[e.reward for e in group]], dtype=torch.float32)
         mean = rewards.mean(1, keepdim=True)
@@ -296,36 +316,70 @@ class GenericDatasetActor(ForgeActor):
 
     @endpoint
     def setup(self):
+        """Ensure the openenv directory is in sys.path for imports."""
+        openenv_dir = Path(__file__).parent
+        if str(openenv_dir) not in sys.path:
+            sys.path.insert(0, str(openenv_dir))
+
+        print("[DEBUG GenericDatasetActor.setup] Starting setup...")
         self._tokenizer = get_tokenizer(self.model)
+        print("[DEBUG GenericDatasetActor.setup] Tokenizer loaded successfully")
 
         # Load dataset
         import os
 
-        if os.path.isfile(self.path) and self.path.endswith(".parquet"):
-            ds = load_dataset(
-                "parquet",
-                data_files={"train": self.path},
-                split=self.data_split,
-            )
+        print(f"[DEBUG GenericDatasetActor.setup] Loading dataset from: {self.path}")
+        if os.path.isfile(self.path):
+            if self.path.endswith(".parquet"):
+                print("[DEBUG GenericDatasetActor.setup] Loading from local parquet file")
+                ds = load_dataset(
+                    "parquet",
+                    data_files={"train": self.path},
+                    split=self.data_split,
+                )
+            elif self.path.endswith(".json"):
+                print("[DEBUG GenericDatasetActor.setup] Loading from local JSON file")
+                ds = load_dataset(
+                    "json",
+                    data_files={"train": self.path},
+                    split=self.data_split,
+                )
+            else:
+                raise ValueError(f"Unsupported file format: {self.path}. Only .parquet and .json files are supported.")
         else:
+            print("[DEBUG GenericDatasetActor.setup] Loading from HF hub or directory")
             ds = load_dataset(
                 self.path,
                 split=self.data_split,
                 streaming=self.streaming,
                 revision=self.revision,
             )
+        print(
+            f"[DEBUG GenericDatasetActor.setup] Dataset loaded successfully, type: {type(ds)}"
+        )
 
         # Apply transformation function if provided
         if self.transform_sample_fn:
+            print("[DEBUG GenericDatasetActor.setup] Applying transform_sample_fn...")
 
             def transform_wrapper(sample):
                 return self.transform_sample_fn(sample, self._tokenizer)
 
+            print("[DEBUG GenericDatasetActor.setup] Applying filter...")
             ds = ds.filter(lambda x: transform_wrapper(x) is not None)
+            print("[DEBUG GenericDatasetActor.setup] Filter applied, applying map...")
             ds = ds.map(transform_wrapper)
+            print("[DEBUG GenericDatasetActor.setup] Map applied successfully")
+        else:
+            print(
+                "[DEBUG GenericDatasetActor.setup] No transform_sample_fn provided, skipping transformation"
+            )
 
+        print("[DEBUG GenericDatasetActor.setup] Shuffling dataset...")
         ds = ds.shuffle()
+        print("[DEBUG GenericDatasetActor.setup] Creating iterator...")
         self._iterator = iter(ds)
+        print("[DEBUG GenericDatasetActor.setup] Setup complete!")
 
     @endpoint
     async def sample(self) -> dict[str, str] | None:
@@ -333,11 +387,14 @@ class GenericDatasetActor(ForgeActor):
             sample = next(self._iterator)
 
             record_metric("dataset/sample/count_samples_generated", 1, Reduce.SUM)
-            record_metric(
-                "dataset/sample/avg_sample_len",
-                len(sample["request"]),
-                Reduce.MEAN,
-            )
+
+            # Only record sample length if the "request" key exists
+            if "request" in sample:
+                record_metric(
+                    "dataset/sample/avg_sample_len",
+                    len(sample["request"]),
+                    Reduce.MEAN,
+                )
 
             return sample
         except StopIteration:
@@ -373,6 +430,7 @@ async def main(cfg: DictConfig):
     max_res_tokens = cfg.max_res_tokens
 
     # Load task-specific functions
+    print("[DEBUG main] Loading task-specific functions...")
     task_config = cfg.task
 
     # Load functions from !function references
@@ -380,26 +438,66 @@ async def main(cfg: DictConfig):
     evaluate_response_fn = None
     transform_sample_fn = None
 
+    print(f"[DEBUG main] task_config.build_action = {task_config.build_action}")
+    print(
+        f"[DEBUG main] task_config.build_action type = {type(task_config.build_action)}"
+    )
+    print(
+        f"[DEBUG main] isinstance check = {isinstance(task_config.build_action, (tuple, list))}"
+    )
+    if hasattr(task_config.build_action, "__len__"):
+        print(f"[DEBUG main] len = {len(task_config.build_action)}")
+        if len(task_config.build_action) > 0:
+            print(f"[DEBUG main] first element = {task_config.build_action[0]}")
+
+    # OmegaConf may convert tuples/tags to lists or ListConfig, so check for all
     if (
-        isinstance(task_config.build_action, tuple)
+        isinstance(task_config.build_action, (tuple, list, ListConfig))
+        and len(task_config.build_action) == 2
         and task_config.build_action[0] == "!function"
     ):
+        print(
+            f"[DEBUG main] Loading build_action_fn from {task_config.build_action[1]}"
+        )
         build_action_fn = load_function_from_string(task_config.build_action[1])
+        print(f"[DEBUG main] build_action_fn loaded: {build_action_fn}")
 
+    print(
+        f"[DEBUG main] task_config.evaluate_response = {task_config.evaluate_response}"
+    )
     if (
-        isinstance(task_config.evaluate_response, tuple)
+        isinstance(task_config.evaluate_response, (tuple, list, ListConfig))
+        and len(task_config.evaluate_response) == 2
         and task_config.evaluate_response[0] == "!function"
     ):
+        print(
+            f"[DEBUG main] Loading evaluate_response_fn from {task_config.evaluate_response[1]}"
+        )
         evaluate_response_fn = load_function_from_string(
             task_config.evaluate_response[1]
         )
+        print(f"[DEBUG main] evaluate_response_fn loaded: {evaluate_response_fn}")
 
-    if (
-        hasattr(task_config, "transform_sample")
-        and isinstance(task_config.transform_sample, tuple)
-        and task_config.transform_sample[0] == "!function"
-    ):
-        transform_sample_fn = load_function_from_string(task_config.transform_sample[1])
+    if hasattr(task_config, "transform_sample"):
+        print(
+            f"[DEBUG main] task_config.transform_sample = {task_config.transform_sample}"
+        )
+        if (
+            isinstance(task_config.transform_sample, (tuple, list, ListConfig))
+            and len(task_config.transform_sample) == 2
+            and task_config.transform_sample[0] == "!function"
+        ):
+            print(
+                f"[DEBUG main] Loading transform_sample_fn from {task_config.transform_sample[1]}"
+            )
+            transform_sample_fn = load_function_from_string(
+                task_config.transform_sample[1]
+            )
+            print(f"[DEBUG main] transform_sample_fn loaded: {transform_sample_fn}")
+    else:
+        print("[DEBUG main] No transform_sample in task_config")
+
+    print("[DEBUG main] All task-specific functions loaded successfully")
 
     # Get env class and action class from task config
     from envs import AutoEnv, AutoAction
@@ -437,6 +535,7 @@ async def main(cfg: DictConfig):
     if env_name == "julia" and "JULIA_MAX_WORKERS" not in env_vars:
         env_vars["JULIA_MAX_WORKERS"] = str(openenv_config.get("julia_max_workers", 16))
 
+    print("[DEBUG main] Initializing GenericOpenEnvActor...")
     env_actor = await GenericOpenEnvActor.options(
         **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
     ).as_actor(
@@ -448,7 +547,44 @@ async def main(cfg: DictConfig):
         request_timeout_s=request_timeout_s,
         container_memory_gb=container_memory_gb,
     )
+    print("[DEBUG main] GenericOpenEnvActor initialized successfully")
 
+    print("[DEBUG main] Starting asyncio.gather for all actors...")
+    print("[DEBUG main] - Creating GenericDatasetActor...")
+    dataset_task = GenericDatasetActor.options(**cfg.actors.dataset).as_actor(
+        path=cfg.dataset.path,
+        revision=cfg.dataset.get("revision", "main"),
+        data_split=cfg.dataset.get("data_split", "train"),
+        streaming=cfg.dataset.get("streaming", False),
+        model=cfg.model,
+        transform_sample_fn=transform_sample_fn,
+    )
+    print("[DEBUG main] - Creating Policy...")
+    policy_task = Policy.options(**cfg.services.policy).as_service(**cfg.policy)
+    print("[DEBUG main] - Creating RLTrainer...")
+    trainer_task = RLTrainer.options(**cfg.actors.trainer).as_actor(
+        **cfg.trainer, loss=dapo_loss
+    )
+    print("[DEBUG main] - Creating ReplayBuffer...")
+    replay_task = ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
+        **cfg.replay_buffer, collate=collate
+    )
+    print("[DEBUG main] - Creating ComputeAdvantages...")
+    advantages_task = ComputeAdvantages.options(
+        **cfg.actors.compute_advantages
+    ).as_actor()
+    print("[DEBUG main] - Creating ReferenceModel...")
+    ref_model_task = ReferenceModel.options(**cfg.services.ref_model).as_service(
+        **cfg.ref_model
+    )
+    print("[DEBUG main] - Creating GenericRewardActor...")
+    reward_task = GenericRewardActor.options(**cfg.services.reward_actor).as_service(
+        env_actor=env_actor,
+        build_action_fn=build_action_fn,
+        evaluate_response_fn=evaluate_response_fn,
+    )
+
+    print("[DEBUG main] All tasks created, now awaiting asyncio.gather...")
     (
         dataloader,
         policy,
@@ -458,27 +594,15 @@ async def main(cfg: DictConfig):
         ref_model,
         reward_actor,
     ) = await asyncio.gather(
-        GenericDatasetActor.options(**cfg.actors.dataset).as_actor(
-            path=cfg.dataset.path,
-            revision=cfg.dataset.get("revision", "main"),
-            data_split=cfg.dataset.get("data_split", "train"),
-            streaming=cfg.dataset.get("streaming", False),
-            model=cfg.model,
-            transform_sample_fn=transform_sample_fn,
-        ),
-        Policy.options(**cfg.services.policy).as_service(**cfg.policy),
-        RLTrainer.options(**cfg.actors.trainer).as_actor(**cfg.trainer, loss=dapo_loss),
-        ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
-            **cfg.replay_buffer, collate=collate
-        ),
-        ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
-        ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
-        GenericRewardActor.options(**cfg.services.reward_actor).as_service(
-            env_actor=env_actor,
-            build_action_fn=build_action_fn,
-            evaluate_response_fn=evaluate_response_fn,
-        ),
+        dataset_task,
+        policy_task,
+        trainer_task,
+        replay_task,
+        advantages_task,
+        ref_model_task,
+        reward_task,
     )
+    print("[DEBUG main] asyncio.gather completed successfully!")
 
     max_steps = cfg.trainer.training.steps or -1
 

@@ -212,6 +212,10 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
             else:
                 logger.info(f"Using port {available_port}")
 
+            # Update PORT env var to match the dynamically selected port
+            # This is critical for host networking where container listens directly on host port
+            self.env_vars["PORT"] = str(available_port)
+
             # Log environment variables if provided
             if self.env_vars:
                 logger.debug(
@@ -222,7 +226,7 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
             # This is universal across all OpenEnv environments
             self.client = self.env_class.from_docker_image(
                 self.docker_image,
-                timeout_s=self.container_timeout_s,
+                wait_timeout=self.container_timeout_s,
                 request_timeout_s=self.request_timeout_s,
                 env_vars=self.env_vars,
                 port=available_port,
@@ -379,13 +383,13 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
                                 )
 
                             logging.info(
-                                f"Recreating container with timeout_s={self.container_timeout_s}, "
+                                f"Recreating container with wait_timeout={self.container_timeout_s}, "
                                 f"request_timeout_s={self.request_timeout_s}, port={available_port}, "
                                 f"memory_gb={self.container_memory_gb}"
                             )
                             self.client = self.env_class.from_docker_image(
                                 self.docker_image,
-                                timeout_s=self.container_timeout_s,
+                                wait_timeout=self.container_timeout_s,
                                 request_timeout_s=self.request_timeout_s,
                                 env_vars=self.env_vars,
                                 port=available_port,

@@ -16,9 +16,9 @@ rollout_threads: 1
 # Task-specific configuration
 task:
   env_name: "julia"  # Used to load JuliaEnv and JuliaAction via AutoEnv
-  build_action: !function julia_utils.build_julia_action
-  evaluate_response: !function julia_utils.evaluate_julia_response
-  transform_sample: !function julia_utils.transform_julia_sample
+  build_action: !function apps.openenv.julia_utils.build_julia_action
+  evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
+  transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
 
 # Observability configuration
 metric_logging:
@@ -81,10 +81,10 @@ trainer:
   lr_scheduler:
     warmup_steps: 0
   training:
-    local_batch_size: ${batch_size}
+    local_batch_size: ${multiply:${batch_size},${group_size}}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
     max_norm: 1.0
-    steps: 3000
+    steps: 100
     dtype: bfloat16
     gc_freq: 1
   compile:
