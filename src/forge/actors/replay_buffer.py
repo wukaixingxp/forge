@@ -168,10 +168,29 @@ class ReplayBuffer(ForgeActor):
         evicted_count = buffer_len_before_evict - len(self.buffer)
         record_metric("buffer/evict/sum_episodes_evicted", evicted_count, Reduce.SUM)
 
-        logger.debug(
-            f"maximum policy age: {self.max_policy_age}, current policy version: {curr_policy_version}, "
-            f"{evicted_count} episodes expired, {len(self.buffer)} episodes left"
-        )
+        # Enhanced debug logging to detect hang conditions
+        if evicted_count > 0 or len(self.buffer) == 0:
+            policy_versions_in_buffer = [ep.data.policy_version for ep in self.buffer]
+            logger.debug(
+                f"[BUFFER EVICTION] max_policy_age: {self.max_policy_age}, "
+                f"curr_policy_version: {curr_policy_version}, "
+                f"evicted: {evicted_count}, remaining: {len(self.buffer)}, "
+                f"versions_in_buffer: {set(policy_versions_in_buffer) if policy_versions_in_buffer else 'EMPTY'}"
+            )
+
+            # Warn if buffer is empty or critically low
+            if len(self.buffer) == 0:
+                logger.warning(
+                    f"[BUFFER WARNING] Buffer is EMPTY after eviction! "
+                    f"curr_policy_version={curr_policy_version}, max_policy_age={self.max_policy_age}. "
+                    f"This may cause training to hang if no new episodes arrive."
+                )
+            elif len(self.buffer) < self.batch_size * self.dp_size:
+                logger.warning(
+                    f"[BUFFER WARNING] Buffer has only {len(self.buffer)} episodes, "
+                    f"but need {self.batch_size * self.dp_size} for sampling. "
+                    f"Training may stall until more episodes arrive."
+                )
 
     def _collect(self, indices: list[int]):
         """Efficiently traverse deque and collect elements at each requested index"""

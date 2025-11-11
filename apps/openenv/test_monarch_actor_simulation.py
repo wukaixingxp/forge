@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """
 Test to simulate the Monarch actor scenario where functions are pickled
 and sent to remote actors that need to unpickle them.
@@ -32,14 +38,14 @@ def test_remote_process_unpickling():
         import sys
         import pickle
         from pathlib import Path
-        
+
         # This is what happens when a remote actor imports the main module
         # The module-level code in main.py should add openenv to sys.path
         import main
-        
+
         # Read pickled data from stdin
         pickled_data = sys.stdin.buffer.read()
-        
+
         try:
             # This is where the error occurred - unpickling requires julia_utils to be importable
             func = pickle.loads(pickled_data)

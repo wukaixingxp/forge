@@ -53,9 +53,60 @@ openenv_config:
   container_memory_gb: 64
   port: 8000
   num_worker: 4
+  # Additional imports to authorize in Python environment (same as coding-grpo)
+  additional_imports:
+    # Core (default in app.py)
+    - sys
+    - os
+    - functools
+    - typing
+    # Data Science & Numerical
+    - numpy
+    # Data Structures & Collections
+    - dataclasses
+    - copy
+    - heapq
+    - enum
+    # String & Text Processing
+    - string
+    - ast
+    # Data Formats & Serialization
+    - json
+    - struct
+    - base64
+    - csv
+    # Math & Numbers
+    - math
+    - cmath
+    # Abstract Base Classes & Patterns
+    - abc
+    - contextlib
+    - inspect
+    # Security & Utilities
+    - secrets
+    - uuid
+    # I/O & Path Operations
+    - pathlib
+    - io
+    # Async & Concurrency
+    - threading
+    - asyncio
+    - concurrent.futures
+    # Network & Web
+    - urllib.parse
+    - socket
+    # Additional common imports
+    - random
+    - itertools
+    - collections
+    - time
+    - datetime
+    - re
+    - statistics
 
 # Policy configuration
 policy:
+  prefetch_weights_to_shm: false  # Disable weight prefetching to avoid hanging
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -82,7 +133,6 @@ trainer:
     name: AdamW
     lr: 5e-6
     eps: 1e-8
-    weight_decay: 0.01
   lr_scheduler:
     warmup_steps: 0
   training:

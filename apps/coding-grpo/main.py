@@ -20,7 +20,6 @@ os.environ.setdefault("GOMAXPROCS", "4")
 os.environ.setdefault("GOMEMLIMIT", "2GiB")
 
 import asyncio
-import gc
 import logging
 import time
 import uuid
@@ -29,14 +28,6 @@ from typing import Any, Callable
 
 import torch
 
-# Optional memory monitoring
-try:
-    import psutil
-
-    HAS_PSUTIL = True
-except ImportError:
-    HAS_PSUTIL = False
-
 # Configure logging to see INFO level messages
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -44,13 +35,15 @@ logging.basicConfig(
 import torch.nn.functional as F
 import torchstore as ts
 from datasets import load_dataset
-from envs.coding_env import CodeAction, CodingEnv
 from forge.actors._torchstore_utils import (
     get_dcp_whole_state_dict_key,
     get_param_prefix,
 )
 from forge.actors.generator import Generator
-from forge.actors.generic_openenv import GenericOpenEnvActor
+
+# from forge.actors.podman_coder import PodmanPythonCoder
+from forge.actors.openenv_coder import OpenEnvCoder
+
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import RLTrainer
@@ -178,7 +171,7 @@ def simple_grpo_loss(
     ref_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     padding_mask: torch.Tensor,
-    beta: float = 0.01,
+    beta: float = 0.001,
 ) -> torch.Tensor:
     """
     GRPO Loss Function for on-policy samples with numerical stability improvements
@@ -196,13 +189,40 @@ def simple_grpo_loss(
     ref_logprobs is ONLY used for the KL penalty, not the policy ratio.
     """
     logprobs: torch.Tensor = compute_logprobs(logits, response)
-    kl = torch.exp(ref_logprobs - logprobs) - (ref_logprobs - logprobs) - 1
+
+    # Check for NaN/Inf in logprobs
+    if torch.isnan(logprobs).any() or torch.isinf(logprobs).any():
+        print("WARNING: NaN/Inf detected in logprobs!")
+        logprobs = torch.nan_to_num(logprobs, nan=0.0, posinf=0.0, neginf=-100.0)
+
+    # ✅ CORRECT: On-policy REINFORCE gradient
+    # This gives gradient: -A · ∇log p_current
+    # Forward value: 1.0 * advantages (since exp(0) = 1)
+    # Backward gradient: advantages · ∇log p_current
     per_token_policy_loss = torch.exp(logprobs - logprobs.detach()) * advantages
+
+    # ✅ KL divergence penalty with numerical stability
+    # Clamp to prevent extreme values while allowing meaningful divergence
+    delta = (ref_logprobs - logprobs).clamp(-10, 10)
+    kl = torch.exp(delta) - delta - 1
+
+    # ✅ Clamp KL to prevent extreme values
+    kl = kl.clamp(-20, 20)
+
     per_token_loss = -(per_token_policy_loss - beta * kl)
+
+    # ✅ Loss clamping as a safety measure
+    per_token_loss = per_token_loss.clamp(-100, 100)
+
     loss = (
         ((per_token_loss * padding_mask).sum(dim=1))
         / (padding_mask.sum(dim=1).clamp(min=1.0))
     ).mean()
+
+    # Check for NaN/Inf in final loss
+    if torch.isnan(loss) or torch.isinf(loss):
+        print("WARNING: NaN/Inf detected in final loss!")
+        loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
 
     # ✅ Enhanced logging for debugging
     record_metric("loss/policy_loss", per_token_policy_loss.mean().item(), Reduce.MEAN)
@@ -215,6 +235,7 @@ def simple_grpo_loss(
     record_metric("loss/per_token_loss_max", per_token_loss.max().item(), Reduce.MEAN)
     record_metric("loss/logprobs_mean", logprobs.mean().item(), Reduce.MEAN)
     record_metric("loss/ref_logprobs_mean", ref_logprobs.mean().item(), Reduce.MEAN)
+    record_metric("loss/delta_mean", delta.mean().item(), Reduce.MEAN)
 
     return loss
 
@@ -366,28 +387,52 @@ class DatasetActor(ForgeActor):
 
         def get_coding_system_prompt():
             """Get system prompt for coding tasks."""
+            return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
 
-        return """You are an expert Python programmer who writes clean, efficient, and well-tested code.
+Given a problem description, write a Python function that solves it following these guidelines:
 
-        Given a problem description, write a Python function that solves it following these guidelines:
+**CODE REQUIREMENTS:**
+1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
+2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
+3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
+4. **Ensure correctness**: Your solution should be robust and handle all requirements
 
-        **CODE REQUIREMENTS:**
-        1. **Write clean and efficient code**: Use clear variable names, proper structure, and Pythonic idioms
-        2. **Include comprehensive docstrings**: Explain what the function does, parameters, return values, and any important notes
-        3. **Handle edge cases**: Consider and appropriately handle boundary conditions and potential errors
-        4. **Ensure correctness**: Your solution should be robust and handle all requirements
+**CRITICAL RESTRICTIONS (Your code WILL FAIL if you violate these):**
 
+**FORBIDDEN KEYWORDS:**
+- NO `global` keyword (use function parameters/returns instead)
+- NO `yield` keyword (no generators, use lists instead)
+- NO `nonlocal` keyword (restructure your code to avoid it)
 
+**FORBIDDEN OPERATIONS:**
+- NO dunder attributes: `__dict__`, `__name__`, `__code__`, etc.
+- NO dunder methods: `__contains__()`, etc. (use `in` operator instead)
+- NO `input()` function (all inputs come from function parameters)
+- NO `locals()` or `globals()` functions
+- NO nested class definitions
 
-        **FORMAT YOUR RESPONSE AS:**
+**FILE OPERATIONS:**
+- Use `pathlib` for file paths, NOT `os.path`
+- Example: `from pathlib import Path; p = Path('/path/to/file')`
 
-        ```python
-        def function_name(parameters):
-            \"\"\"Comprehensive docstring explaining the function.\"\"\"
-            # Implementation here
-            pass
-        ```
-        """
+**ALLOWED STANDARD LIBRARY IMPORTS:**
+- Core: sys, os, functools, typing, math, random, time, datetime, re, collections, itertools, statistics
+- Data: json, csv, struct, base64, dataclasses, copy, heapq, enum
+- Strings: string, ast, unicodedata
+- Advanced: abc, contextlib, inspect, secrets, uuid, pathlib, io
+- Async/Threading: threading, asyncio, concurrent.futures
+- Network: socket, urllib.parse
+
+**FORMAT YOUR RESPONSE AS:**
+
+```python
+def function_name(parameters):
+    \"\"\"Comprehensive docstring explaining the function.\"\"\"
+    # Implementation here
+    pass
+```
+
+Provide the final, working solution. Focus on correctness, readability, and efficiency."""
 
         def transform_sample(sample):
             # AceCode format with OSS filtering
@@ -505,33 +550,56 @@ async def main(cfg: DictConfig):
 
     # ---- Setup services ---- #
 
-    # Setup coding environment using GenericOpenEnvActor with CodingEnv
-    # This actor provides a sandboxed Python execution environment via OpenEnv.
-    # Get docker image and env vars from config, with sensible defaults
-    coding_env_config = cfg.get("coding_env", {})
-    docker_image = coding_env_config.get("docker_image", "coding-env:latest")
-    additional_imports = coding_env_config.get(
-        "additional_imports", ["sys", "os", "functools", "typing"]
-    )
-    env_vars = {"PYTHON_ADDITIONAL_IMPORTS": ",".join(additional_imports)}
-    container_timeout_s = coding_env_config.get("container_timeout_s", 180.0)
-    request_timeout_s = coding_env_config.get("request_timeout_s", 120.0)
-    container_memory_gb = coding_env_config.get("container_memory_gb", 4)
-
-    coder_actor = await GenericOpenEnvActor.as_actor(
-        env_class=CodingEnv,
-        action_class=CodeAction,
-        docker_image=docker_image,
-        env_vars=env_vars,
-        container_timeout_s=container_timeout_s,
-        request_timeout_s=request_timeout_s,
-        container_memory_gb=container_memory_gb,
-        enable_zombie_cleanup=True,  # Enable for code execution environments
+    # Setup coding environment with comprehensive standard library imports
+    # Based on analysis of 143 numpy, 47 requests, 35 urllib.parse, 31 socket, 31 dataclasses import failures
+    coder_actor = await OpenEnvCoder.as_actor(
+        additional_imports=[
+            # Core (default)
+            "sys",
+            "os",
+            "functools",
+            "typing",
+            # Data Science & Numerical
+            "numpy",
+            "pandas",
+            # Data Structures & Collections (31 dataclasses, 22 copy, 19 heapq, 17 enum)
+            "dataclasses",
+            "copy",
+            "heapq",
+            "enum",
+            # String & Text Processing (22 string, 21 ast)
+            "string",
+            "ast",
+            # Data Formats & Serialization (25 json, 15 struct, 10 base64, 5 csv)
+            "json",
+            "struct",
+            "base64",
+            "csv",
+            # Math & Numbers (12 cmath)
+            "cmath",
+            # Abstract Base Classes & Patterns (16 abc, 7 contextlib, 7 inspect)
+            "abc",
+            "contextlib",
+            "inspect",
+            # Security & Utilities (16 secrets, 4 uuid)
+            "secrets",
+            "uuid",
+            # I/O & Path Operations (6 pathlib, 5 io)
+            "pathlib",
+            "io",
+            # Async & Concurrency (11 threading, 6 asyncio, 3 concurrent.futures)
+            "threading",
+            "asyncio",
+            "concurrent.futures",
+            # Network & Web (35 urllib.parse, 31 socket)
+            "urllib.parse",
+            "socket",
+        ]
     )
 
     # Setup coding reward functions
     ground_truth_reward = GroundTruthTestReward(coder_actor)
-    thinking_reward = ThinkingReward()
+    # thinking_reward = ThinkingReward()
 
     (
         dataloader,
@@ -553,7 +621,7 @@ async def main(cfg: DictConfig):
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
         ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
         RewardActor.options(**cfg.services.reward_actor).as_service(
-            reward_functions=[ground_truth_reward, thinking_reward]
+            reward_functions=[ground_truth_reward]
         ),
     )
 
@@ -642,36 +710,6 @@ async def main(cfg: DictConfig):
                     "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
                 )
                 t.stop()
-
-                # CRITICAL: Explicit memory cleanup to prevent leaks
-                # Clear tensor references
-                del episodes, advantages, responses
-                # Clear CUDA cache if using GPU
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                # Force garbage collection every rollout to prevent accumulation
-                gc.collect()
-
-                # CRITICAL: Clean up zombie processes periodically (every 5 rollouts)
-                # This prevents accumulation of timed-out processes consuming memory
-                if rollout_count % 5 == 0:
-                    killed_count = await coder_actor.cleanup_zombie_processes.call_one()
-                    if killed_count > 0:
-                        print(
-                            f"Rollout {rollout_count}: Cleaned up {killed_count} zombie processes"
-                        )
-                        record_metric(
-                            "memory/zombie_processes_killed", killed_count, Reduce.SUM
-                        )
-
-                # Log memory usage periodically (every 10 rollouts) if psutil is available
-                if rollout_count % 10 == 0 and HAS_PSUTIL:
-                    process = psutil.Process()
-                    memory_mb = process.memory_info().rss / 1024 / 1024
-                    record_metric("memory/process_memory_mb", memory_mb, Reduce.MEAN)
-                    print(
-                        f"Rollout {rollout_count}: Process memory = {memory_mb:.2f} MB"
-                    )
             except RuntimeError as e:
                 error_msg = str(e).lower()
                 # Check if this is a container-related error that couldn't be recovered
@@ -759,7 +797,7 @@ async def main(cfg: DictConfig):
     except KeyboardInterrupt:
         print("Training interrupted by user")
     finally:
-        print("Shutting down... (this may take a few seconds)")
+        print("Shutting down...")
         shutdown_event.set()
 
         try:
@@ -784,6 +822,8 @@ if __name__ == "__main__":
     @parse
     def _main(cfg):
         """Main entry point for GRPO training."""
+        os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
+        os.environ["NCCL_TIMEOUT_MS"] = "60000"  # 60 second timeout
         os.environ["MONARCH_HOSTMESH_V1"] = "1"
         os.environ["TORCHSTORE_RDMA_ENABLED"] = "1"
         # os.environ["FORGE_DISABLE_METRICS"] = "1"

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """Test script to verify OmegaConf config loading and function references."""
 
 import sys
@@ -9,8 +15,9 @@ openenv_dir = Path(__file__).parent
 if str(openenv_dir) not in sys.path:
     sys.path.insert(0, str(openenv_dir))
 
-from omegaconf import OmegaConf, ListConfig, DictConfig
 import argparse
+
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 
 def test_config_loading_with_parse():
@@ -131,7 +138,7 @@ def test_config_loading_with_parse():
     print("OMEGACONF SPECIFIC CHECKS")
     print("=" * 80)
 
-    from omegaconf import ListConfig, DictConfig
+    from omegaconf import DictConfig, ListConfig
 
     print(
         f"\nIs build_action a ListConfig? {isinstance(task_config.build_action, ListConfig)}"

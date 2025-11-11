@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """
 Test script to verify the fix for OmegaConf ListConfig issue.
 
@@ -17,10 +23,10 @@ openenv_dir = Path(__file__).parent
 if str(openenv_dir) not in sys.path:
     sys.path.insert(0, str(openenv_dir))
 
-from omegaconf import OmegaConf, ListConfig, DictConfig
-from omegaconf import _utils as omegaconf_utils
 import importlib
+
 import yaml
+from omegaconf import _utils as omegaconf_utils, DictConfig, ListConfig, OmegaConf
 
 
 # Register the !function tag constructor (same as in main.py)

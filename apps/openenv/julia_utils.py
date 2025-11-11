@@ -10,7 +10,7 @@ Contains prompt building, action creation, and reward evaluation functions.
 """
 
 import re
-from typing import Dict, Any
+from typing import Any, Dict
 
 from forge.observability.metrics import record_metric, Reduce
 
@@ -143,7 +143,6 @@ def evaluate_julia_response(result, response: str, sample: Dict[str, Any]) -> fl
 
         # Extract reward from result
         reward = result.reward if result.reward is not None else 0.0
-        record_metric("reward/julia/reward", reward, Reduce.MEAN)
 
         obs = result.observation
         passed = obs.tests_passed
@@ -211,6 +210,12 @@ def transform_julia_sample(sample: Dict[str, Any], tokenizer) -> Dict[str, Any] 
     """
     # Validate required fields
     if not sample.get("julia_test") or not sample.get("first_test_case"):
+        # Debug: log why sample was rejected (only for first few)
+        if not hasattr(transform_julia_sample, "_warned"):
+            print(
+                f"WARNING: Sample rejected - missing 'julia_test' or 'first_test_case' field. Sample keys: {list(sample.keys())}"
+            )
+            transform_julia_sample._warned = True
         return None
 
     # Build prompt

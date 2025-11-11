@@ -10,7 +10,7 @@ Contains prompt building, action creation, and reward evaluation functions.
 """
 
 import re
-from typing import Dict, Any
+from typing import Any, Dict
 
 from forge.observability.metrics import record_metric, Reduce
 
@@ -50,7 +50,9 @@ def build_python_prompt(sample: Dict[str, Any], tokenizer) -> str:
         Formatted prompt string ready for model generation
     """
     system_prompt = get_python_system_prompt()
-    request = sample.get("prompt", "")
+
+    # Support both HumanEval and AceCode formats
+    request = sample.get("prompt") or sample.get("question", "")
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -75,7 +77,7 @@ def build_python_action(response: str, sample: Dict[str, Any]):
         sample: Dataset sample with test information
 
     Returns:
-        CodingAction instance with code
+        CodingAction instance with code and test_code
     """
     # Import AutoAction dynamically to avoid pickle issues
     from envs import AutoAction
@@ -89,20 +91,17 @@ def build_python_action(response: str, sample: Dict[str, Any]):
     # Get test code if available
     test_code = sample.get("target", "")
 
-    return CodingAction(
-        code=code,
-        test_code=test_code,
-    )
+    return CodingAction(code=code, test_code=test_code)
 
 
 def evaluate_python_response(result, response: str, sample: Dict[str, Any]) -> float:
     """
     Evaluate Python code execution result and return reward.
 
-    Uses a simple reward structure:
-    - 1.0: All tests passed (exit code 0)
-    - 0.1: Runtime error (code is syntactically valid)
-    - 0.0: Syntax error or other failure
+    The reward is calculated by the environment based on:
+    - Code compilation: -3 (failed) or +1 (success)
+    - Test results: +3 per passed test, -1 per failed test
+    - Perfect score bonus: +2 if all tests pass
 
     Args:
         result: StepResult from environment execution
@@ -110,7 +109,7 @@ def evaluate_python_response(result, response: str, sample: Dict[str, Any]) -> f
         sample: Dataset sample (for logging)
 
     Returns:
-        Reward score (0.0, 0.1, or 1.0)
+        Reward score calculated by the environment
     """
     try:
         print("=" * 80)
@@ -135,32 +134,39 @@ def evaluate_python_response(result, response: str, sample: Dict[str, Any]) -> f
 
         obs = result.observation
 
-        # Simple binary reward based on exit code
-        if obs.exit_code == 0:
-            reward = 1.0
-            print("✓ All tests passed!")
-            record_metric("reward/python/success", 1, Reduce.SUM)
-        elif "SyntaxError" in obs.stderr or "syntax error" in obs.stderr.lower():
-            reward = 0.0
-            print("✗ Syntax error")
-            record_metric("reward/python/syntax_error", 1, Reduce.SUM)
-        else:
-            reward = 0.1
-            print("✗ Runtime error (but syntactically valid)")
-            record_metric("reward/python/runtime_error", 1, Reduce.SUM)
+        # Get reward directly from environment observation
+        reward = obs.reward if hasattr(obs, 'reward') else 0.0
+        record_metric("reward/python/reward", reward, Reduce.MEAN)
 
         # Log execution details
         print("CodingEnv Execution Result:")
         print(f"  Reward: {reward:.3f}")
         print(f"  Exit Code: {obs.exit_code}")
 
+        # Log test results if available
+        if hasattr(obs, 'tests_passed') and hasattr(obs, 'tests_failed'):
+            passed = obs.tests_passed
+            failed = obs.tests_failed
+            total = passed + failed
+            print(f"  Tests Passed: {passed}")
+            print(f"  Tests Failed: {failed}")
+            print(f"  Total Tests: {total}")
+
+            # Log test metrics
+            if total > 0:
+                pass_rate = passed / total
+                record_metric("reward/python/pass_rate", pass_rate, Reduce.MEAN)
+
+        if hasattr(obs, 'code_compiles'):
+            print(f"  Code Compiles: {obs.code_compiles}")
+
         if obs.stderr:
             print(f"  Stderr: {obs.stderr[:500]}")
+            if "Error" in obs.stderr or "error" in obs.stderr:
+                record_metric("reward/python/has_errors", 1, Reduce.SUM)
 
         if obs.stdout:
             print(f"  Stdout (first 200 chars): {obs.stdout[:200]}")
-
-        record_metric("reward/python/reward", reward, Reduce.MEAN)
 
         print(f"Final Reward: {reward:.3f}")
         print("=" * 80)
@@ -211,15 +217,26 @@ def transform_python_sample(sample: Dict[str, Any], tokenizer) -> Dict[str, Any]
     Returns:
         Transformed sample with 'request', 'target', 'task_id' or None if invalid
     """
-    # Validate required fields
-    if not sample.get("prompt"):
+    # Validate required fields - support both HumanEval and AceCode formats
+    prompt_text = sample.get("prompt") or sample.get("question")
+    if not prompt_text:
+        # Debug: log why sample was rejected (only for first few)
+        if not hasattr(transform_python_sample, '_warned'):
+            print(f"WARNING: Sample rejected - missing 'prompt' or 'question' field. Sample keys: {list(sample.keys())}")
+            transform_python_sample._warned = True
         return None
 
     # Build prompt
     formatted_request = build_python_prompt(sample, tokenizer)
 
+    # Get test code - support both formats
+    test_code = sample.get("test") or sample.get("test_cases", "")
+    if isinstance(test_code, list):
+        # AceCode format: list of test cases
+        test_code = "\n".join(test_code)
+
     return {
         "request": formatted_request,
-        "target": sample.get("test", ""),  # Test code for reward function
-        "task_id": sample.get("task_id", ""),
+        "target": test_code,  # Test code for reward function
+        "task_id": sample.get("task_id") or sample.get("id", ""),
     }

@@ -215,7 +215,9 @@ class Generator(ForgeActor):
         self.output_processor = OutputProcessor(tokenizer, log_stats=None)
 
         # Configure KV caches
+        print("[DEBUG Generator.setup] Calling worker.setup_kv_cache...")
         kv_cache_configs = await self.worker.setup_kv_cache.call()
+        print("[DEBUG Generator.setup] KV cache setup complete!")
         _, kv_cache_config = next(kv_cache_configs.items())
         self.vllm_config.cache_config.num_gpu_blocks = kv_cache_config.num_blocks
         self.vllm_config.cache_config.num_cpu_blocks = 0
@@ -230,9 +232,12 @@ class Generator(ForgeActor):
             include_finished_set=False,
             log_stats=None,
         )
+        print("[DEBUG Generator.setup] Scheduler created, starting processing...")
         self._start_processing()
         if self.prefetch_weights_to_shm:
+            print("[DEBUG Generator.setup] Spawning weight fetchers...")
             self._spawn_fetchers()
+        print("[DEBUG Generator.setup] Setup complete!")
 
     def _spawn_fetchers(self):
         """Spawn weight fetchers that prefetch weights from torchstore to shared memory."""

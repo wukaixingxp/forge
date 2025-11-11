@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """
 Simple direct test of the isinstance fix.
 
@@ -14,8 +20,9 @@ openenv_dir = Path(__file__).parent
 if str(openenv_dir) not in sys.path:
     sys.path.insert(0, str(openenv_dir))
 
-from omegaconf import ListConfig
 import importlib
+
+from omegaconf import ListConfig
 
 
 def load_function_from_string(func_ref: str):

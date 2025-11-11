@@ -3,15 +3,16 @@
 # >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
 
 # Global configuration
-group_size: 16
-batch_size: 4
+group_size: 8
+batch_size: 2
 max_req_tokens: 1024
-max_res_tokens: 2048
+max_res_tokens: 1024
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 2
+off_by_n: 4
 
 # Main loop configuration
 rollout_threads: 1
+sample_timeout_s: 300  # Timeout for buffer sampling (allows time for slow episode generation)
 
 # Task-specific configuration
 task:
@@ -43,14 +44,15 @@ openenv_config:
   docker_image: "julia-env:latest"
   env_vars: {}
   container_timeout_s: 180.0
-  request_timeout_s: 120.0
+  request_timeout_s: 180.0
   container_memory_gb: 128
   port: 8000
-  num_worker: 8
-  julia_max_workers: 16
+  num_worker: 2
+  julia_max_workers: 32
 
 # Policy configuration
 policy:
+  prefetch_weights_to_shm: false  # Disable weight prefetching to avoid hanging
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -75,7 +77,7 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 5e-6
+    lr: 1e-5
     eps: 1e-8
     weight_decay: 0.01
   lr_scheduler:
@@ -84,7 +86,7 @@ trainer:
     local_batch_size: ${multiply:${batch_size},${group_size}}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
     max_norm: 1.0
-    steps: 100
+    steps: 1500
     dtype: bfloat16
     gc_freq: 1
   compile:
@@ -111,7 +113,7 @@ trainer:
 
 # Replay buffer configuration
 replay_buffer:
-  batch_size: ${batch_size}
+  batch_size: ${trainer.training.local_batch_size}
   max_policy_age: ${off_by_n}
   dp_size: ${trainer.parallelism.data_parallel_shard_degree}
 

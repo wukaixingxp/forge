@@ -15,6 +15,8 @@ Usage: python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
 
 import asyncio
 import importlib
+import logging
+import os
 import sys
 import time
 import uuid
@@ -55,6 +57,15 @@ from forge.util.ops import compute_logprobs
 from monarch.actor import endpoint
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from vllm.transformers_utils.tokenizer import get_tokenizer
+
+
+# Set up module logger
+logger = logging.getLogger(__name__)
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format="[%(levelname)s %(name)s] %(message)s",
+)
 
 
 @dataclass
@@ -135,52 +146,52 @@ def collate(
     inputs = []
     targets = []
     for batch_idx, batch in enumerate(batches):
-        print(f"[DEBUG] Processing batch {batch_idx}, len={len(batch)}")
+        logger.debug(f"collate Processing batch {batch_idx}, len={len(batch)}")
 
         request = [e.request_tensor for e in batch]
         request = torch.stack(request)
-        print(f"[DEBUG] request shape: {request.shape}")
+        logger.debug(f"collate request shape: {request.shape}")
 
         response = [e.response_tensor for e in batch]
         response = torch.stack(response)
-        print(f"[DEBUG] response shape: {response.shape}")
+        logger.debug(f"collate response shape: {response.shape}")
 
         ref_logprobs = [e.ref_logprobs for e in batch]
         ref_logprobs = torch.stack(ref_logprobs)
 
         if ref_logprobs.dim() > 2:
             ref_logprobs = ref_logprobs.squeeze(0)
-        print(f"[DEBUG] ref_logprobs shape after stack: {ref_logprobs.shape}")
+        logger.debug(f"collate ref_logprobs shape after stack: {ref_logprobs.shape}")
 
         advantages = [e.advantage for e in batch]
         advantages = torch.tensor(advantages).unsqueeze(-1)
-        print(f"[DEBUG] advantages shape: {advantages.shape}")
+        logger.debug(f"collate advantages shape: {advantages.shape}")
 
         pad_id = batch[0].pad_id
 
         mask = torch.ne(response, pad_id)
-        print(
-            f"[DEBUG] mask shape before checks: {mask.shape}, dtype: {mask.dtype}, type: {type(mask)}"
+        logger.debug(
+            f"collate mask shape before checks: {mask.shape}, dtype: {mask.dtype}, type: {type(mask)}"
         )
 
         if not isinstance(mask, torch.Tensor):
-            print(
-                f"[DEBUG] WARNING: mask is not a tensor, converting from {type(mask)}"
+            logger.debug(
+                f"collate WARNING: mask is not a tensor, converting from {type(mask)}"
             )
             mask = torch.tensor(mask, dtype=torch.bool)
 
         if mask.dim() == 0:
-            print(f"[DEBUG] WARNING: mask is 0D scalar, unsqueezing twice")
+            logger.debug(f"collate WARNING: mask is 0D scalar, unsqueezing twice")
             mask = mask.unsqueeze(0).unsqueeze(0)
         elif mask.dim() == 1:
-            print(
-                f"[DEBUG] WARNING: mask is 1D with shape {mask.shape}, unsqueezing to 2D"
+            logger.debug(
+                f"collate WARNING: mask is 1D with shape {mask.shape}, unsqueezing to 2D"
             )
             mask = mask.unsqueeze(0)
 
-        print(f"[DEBUG] mask final shape: {mask.shape}")
-        print(
-            f"[DEBUG] All shapes - request: {request.shape}, response: {response.shape}, "
+        logger.debug(f"collate mask final shape: {mask.shape}")
+        logger.debug(
+            f"collate All shapes - request: {request.shape}, response: {response.shape}, "
             f"ref_logprobs: {ref_logprobs.shape}, advantages: {advantages.shape}, mask: {mask.shape}"
         )
 
@@ -245,11 +256,11 @@ class GenericRewardActor(ForgeActor):
     @endpoint
     def setup(self):
         """Ensure the openenv directory is in sys.path for imports."""
-        print("[DEBUG GenericRewardActor.setup] Starting setup...")
+        logger.debug("GenericRewardActor.setup Starting setup...")
         openenv_dir = Path(__file__).parent
         if str(openenv_dir) not in sys.path:
             sys.path.insert(0, str(openenv_dir))
-        print("[DEBUG GenericRewardActor.setup] Setup complete!")
+        logger.debug("GenericRewardActor.setup Setup complete!")
 
     @endpoint
     async def evaluate_response(self, prompt: str, response: str, target: Any) -> float:
@@ -276,6 +287,28 @@ class GenericRewardActor(ForgeActor):
             # Evaluate result using task-specific function
             reward = self.evaluate_response_fn(result, response, sample)
 
+            # Record reward metrics
+            record_metric(
+                "reward/evaluate_response/sum_reward",
+                reward,
+                Reduce.SUM,
+            )
+            record_metric(
+                "reward/evaluate_response/avg_reward",
+                reward,
+                Reduce.MEAN,
+            )
+            record_metric(
+                "reward/evaluate_response/std_reward",
+                reward,
+                Reduce.STD,
+            )
+            record_metric(
+                "reward/evaluate_response/count_calls",
+                1,
+                Reduce.SUM,
+            )
+
             return reward
 
         except asyncio.TimeoutError:
@@ -292,7 +325,7 @@ class GenericRewardActor(ForgeActor):
 class ComputeAdvantages(ForgeActor):
     @endpoint
     def setup(self):
-        print("[DEBUG ComputeAdvantages.setup] Setup complete!")
+        logger.debug("ComputeAdvantages.setup Setup complete!")
 
     @endpoint
     async def compute(self, group: Group) -> list[float]:
@@ -321,33 +354,37 @@ class GenericDatasetActor(ForgeActor):
         if str(openenv_dir) not in sys.path:
             sys.path.insert(0, str(openenv_dir))
 
-        print("[DEBUG GenericDatasetActor.setup] Starting setup...")
+        logger.debug("GenericDatasetActor.setup Starting setup...")
         self._tokenizer = get_tokenizer(self.model)
-        print("[DEBUG GenericDatasetActor.setup] Tokenizer loaded successfully")
+        logger.debug("GenericDatasetActor.setup Tokenizer loaded successfully")
 
         # Load dataset
         import os
 
-        print(f"[DEBUG GenericDatasetActor.setup] Loading dataset from: {self.path}")
+        logger.debug(f"GenericDatasetActor.setup Loading dataset from: {self.path}")
         if os.path.isfile(self.path):
             if self.path.endswith(".parquet"):
-                print("[DEBUG GenericDatasetActor.setup] Loading from local parquet file")
+                print(
+                    "[DEBUG GenericDatasetActor.setup] Loading from local parquet file"
+                )
                 ds = load_dataset(
                     "parquet",
                     data_files={"train": self.path},
                     split=self.data_split,
                 )
             elif self.path.endswith(".json"):
-                print("[DEBUG GenericDatasetActor.setup] Loading from local JSON file")
+                logger.debug("GenericDatasetActor.setup Loading from local JSON file")
                 ds = load_dataset(
                     "json",
                     data_files={"train": self.path},
                     split=self.data_split,
                 )
             else:
-                raise ValueError(f"Unsupported file format: {self.path}. Only .parquet and .json files are supported.")
+                raise ValueError(
+                    f"Unsupported file format: {self.path}. Only .parquet and .json files are supported."
+                )
         else:
-            print("[DEBUG GenericDatasetActor.setup] Loading from HF hub or directory")
+            logger.debug("GenericDatasetActor.setup Loading from HF hub or directory")
             ds = load_dataset(
                 self.path,
                 split=self.data_split,
@@ -357,29 +394,80 @@ class GenericDatasetActor(ForgeActor):
         print(
             f"[DEBUG GenericDatasetActor.setup] Dataset loaded successfully, type: {type(ds)}"
         )
+        logger.debug(f"GenericDatasetActor.setup Initial dataset size: {len(ds)}")
+
+        # Ensure we have data before proceeding
+        if len(ds) == 0:
+            raise ValueError(
+                f"Dataset is empty after loading from {self.path}. "
+                "Please check the dataset file and path."
+            )
 
         # Apply transformation function if provided
         if self.transform_sample_fn:
-            print("[DEBUG GenericDatasetActor.setup] Applying transform_sample_fn...")
+            logger.debug("GenericDatasetActor.setup Applying transform_sample_fn...")
 
             def transform_wrapper(sample):
                 return self.transform_sample_fn(sample, self._tokenizer)
 
-            print("[DEBUG GenericDatasetActor.setup] Applying filter...")
+            logger.debug("GenericDatasetActor.setup Applying filter...")
+            original_size = len(ds)
             ds = ds.filter(lambda x: transform_wrapper(x) is not None)
-            print("[DEBUG GenericDatasetActor.setup] Filter applied, applying map...")
+            logger.debug("GenericDatasetActor.setup Filter applied, applying map...")
+            filtered_size = len(ds)
+
+            # Critical assertion: ensure filtering didn't remove all samples
+            if filtered_size == 0:
+                raise ValueError(
+                    f"Dataset transform filtered out ALL {original_size} samples! "
+                    f"This usually means the transform_sample function is rejecting all samples. "
+                    f"Please check:\n"
+                    f"  1. Dataset format matches what transform_sample expects\n"
+                    f"  2. Required fields exist in the dataset\n"
+                    f"  3. transform_sample validation logic is correct\n"
+                    f"Dataset path: {self.path}"
+                )
+
+            # Warning if too many samples were filtered out
+            filtered_out = original_size - filtered_size
+            filter_rate = (
+                (filtered_out / original_size) * 100 if original_size > 0 else 0
+            )
+            if filter_rate > 50:
+                print(
+                    f"WARNING: Transform filtered out {filtered_out}/{original_size} samples ({filter_rate:.1f}%)!"
+                )
+                print(
+                    f"         This seems unusually high. Please verify dataset format."
+                )
+            else:
+                logger.debug(
+                    f"GenericDatasetActor.setup Kept {filtered_size}/{original_size} samples ({100-filter_rate:.1f}%)"
+                )
+
             ds = ds.map(transform_wrapper)
-            print("[DEBUG GenericDatasetActor.setup] Map applied successfully")
+            logger.debug("GenericDatasetActor.setup Map applied successfully")
         else:
             print(
                 "[DEBUG GenericDatasetActor.setup] No transform_sample_fn provided, skipping transformation"
             )
 
-        print("[DEBUG GenericDatasetActor.setup] Shuffling dataset...")
+        logger.debug("GenericDatasetActor.setup Shuffling dataset...")
         ds = ds.shuffle()
-        print("[DEBUG GenericDatasetActor.setup] Creating iterator...")
+
+        # Final assertion: ensure we still have data after all transformations
+        final_size = len(ds)
+        if final_size == 0:
+            raise ValueError(
+                f"Dataset is empty after all transformations! "
+                f"This should not happen - please file a bug report. "
+                f"Dataset path: {self.path}"
+            )
+
+        logger.debug(f"GenericDatasetActor.setup Final dataset size: {final_size}")
+        logger.debug("GenericDatasetActor.setup Creating iterator...")
         self._iterator = iter(ds)
-        print("[DEBUG GenericDatasetActor.setup] Setup complete!")
+        logger.debug("GenericDatasetActor.setup Setup complete!")
 
     @endpoint
     async def sample(self) -> dict[str, str] | None:
@@ -430,7 +518,7 @@ async def main(cfg: DictConfig):
     max_res_tokens = cfg.max_res_tokens
 
     # Load task-specific functions
-    print("[DEBUG main] Loading task-specific functions...")
+    logger.debug("main Loading task-specific functions...")
     task_config = cfg.task
 
     # Load functions from !function references
@@ -438,7 +526,7 @@ async def main(cfg: DictConfig):
     evaluate_response_fn = None
     transform_sample_fn = None
 
-    print(f"[DEBUG main] task_config.build_action = {task_config.build_action}")
+    logger.debug(f"main task_config.build_action = {task_config.build_action}")
     print(
         f"[DEBUG main] task_config.build_action type = {type(task_config.build_action)}"
     )
@@ -446,9 +534,9 @@ async def main(cfg: DictConfig):
         f"[DEBUG main] isinstance check = {isinstance(task_config.build_action, (tuple, list))}"
     )
     if hasattr(task_config.build_action, "__len__"):
-        print(f"[DEBUG main] len = {len(task_config.build_action)}")
+        logger.debug(f"main len = {len(task_config.build_action)}")
         if len(task_config.build_action) > 0:
-            print(f"[DEBUG main] first element = {task_config.build_action[0]}")
+            logger.debug(f"main] first element = {task_config.build_action[0]}")
 
     # OmegaConf may convert tuples/tags to lists or ListConfig, so check for all
     if (
@@ -460,7 +548,7 @@ async def main(cfg: DictConfig):
             f"[DEBUG main] Loading build_action_fn from {task_config.build_action[1]}"
         )
         build_action_fn = load_function_from_string(task_config.build_action[1])
-        print(f"[DEBUG main] build_action_fn loaded: {build_action_fn}")
+        logger.debug(f"main build_action_fn loaded: {build_action_fn}")
 
     print(
         f"[DEBUG main] task_config.evaluate_response = {task_config.evaluate_response}"
@@ -476,7 +564,7 @@ async def main(cfg: DictConfig):
         evaluate_response_fn = load_function_from_string(
             task_config.evaluate_response[1]
         )
-        print(f"[DEBUG main] evaluate_response_fn loaded: {evaluate_response_fn}")
+        logger.debug(f"main evaluate_response_fn loaded: {evaluate_response_fn}")
 
     if hasattr(task_config, "transform_sample"):
         print(
@@ -493,14 +581,38 @@ async def main(cfg: DictConfig):
             transform_sample_fn = load_function_from_string(
                 task_config.transform_sample[1]
             )
-            print(f"[DEBUG main] transform_sample_fn loaded: {transform_sample_fn}")
+            logger.debug(f"main transform_sample_fn loaded: {transform_sample_fn}")
     else:
-        print("[DEBUG main] No transform_sample in task_config")
+        logger.debug("main No transform_sample in task_config")
 
-    print("[DEBUG main] All task-specific functions loaded successfully")
+    logger.debug("main All task-specific functions loaded successfully")
+
+    # Validate configuration for common pitfalls
+    max_policy_age = cfg.replay_buffer.get("max_policy_age", None)
+    off_by_n = cfg.get("off_by_n", None)
+
+    if max_policy_age == 0 or off_by_n == 0:
+        logger.warning(
+            f"\n{'='*80}\n"
+            f"WARNING: Potential training hang detected in configuration!\n"
+            f"{'='*80}\n"
+            f"  max_policy_age = {max_policy_age} (from off_by_n = {off_by_n})\n\n"
+            f"RISK:\n"
+            f"  Setting max_policy_age=0 can cause training to hang if weight updates\n"
+            f"  take longer than the time between training steps. This creates a race\n"
+            f"  condition where the buffer evicts all episodes before the generator\n"
+            f"  finishes updating to the new policy version.\n\n"
+            f"RECOMMENDATION:\n"
+            f"  Set 'off_by_n: 1' (or higher) in your config to allow episodes from\n"
+            f"  the previous policy version to remain in the buffer.\n\n"
+            f"  If you see '[HANG DETECTION]' warnings during training, this is the\n"
+            f"  likely cause. The training will automatically exit with diagnostics\n"
+            f"  after {cfg.get('sample_timeout_s', 300)}s of waiting.\n"
+            f"{'='*80}\n"
+        )
 
     # Get env class and action class from task config
-    from envs import AutoEnv, AutoAction
+    from envs import AutoAction, AutoEnv
 
     env_name = task_config.env_name
     env_class = AutoEnv.from_name(env_name)
@@ -534,8 +646,22 @@ async def main(cfg: DictConfig):
         env_vars["NUM_WORKER"] = str(openenv_config.get("num_worker", 4))
     if env_name == "julia" and "JULIA_MAX_WORKERS" not in env_vars:
         env_vars["JULIA_MAX_WORKERS"] = str(openenv_config.get("julia_max_workers", 16))
+    # CRITICAL: Set execution timeout for Julia environment server
+    # This ensures the timeout inside the Docker container matches our config
+    if env_name == "julia" and "JULIA_EXECUTION_TIMEOUT" not in env_vars:
+        env_vars["JULIA_EXECUTION_TIMEOUT"] = str(int(request_timeout_s))
 
-    print("[DEBUG main] Initializing GenericOpenEnvActor...")
+    # Handle additional_imports for coding environment
+    if env_name == "coding" and "PYTHON_ADDITIONAL_IMPORTS" not in env_vars:
+        additional_imports = openenv_config.get("additional_imports", [])
+        if additional_imports:
+            # Convert list to comma-separated string
+            env_vars["PYTHON_ADDITIONAL_IMPORTS"] = ",".join(additional_imports)
+            logger.debug(
+                f"main Set PYTHON_ADDITIONAL_IMPORTS: {env_vars['PYTHON_ADDITIONAL_IMPORTS']}"
+            )
+
+    logger.debug("main Initializing GenericOpenEnvActor...")
     env_actor = await GenericOpenEnvActor.options(
         **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
     ).as_actor(
@@ -547,10 +673,10 @@ async def main(cfg: DictConfig):
         request_timeout_s=request_timeout_s,
         container_memory_gb=container_memory_gb,
     )
-    print("[DEBUG main] GenericOpenEnvActor initialized successfully")
+    logger.debug("main GenericOpenEnvActor initialized successfully")
 
-    print("[DEBUG main] Starting asyncio.gather for all actors...")
-    print("[DEBUG main] - Creating GenericDatasetActor...")
+    logger.debug("main Starting asyncio.gather for all actors...")
+    logger.debug("main - Creating GenericDatasetActor...")
     dataset_task = GenericDatasetActor.options(**cfg.actors.dataset).as_actor(
         path=cfg.dataset.path,
         revision=cfg.dataset.get("revision", "main"),
@@ -559,32 +685,32 @@ async def main(cfg: DictConfig):
         model=cfg.model,
         transform_sample_fn=transform_sample_fn,
     )
-    print("[DEBUG main] - Creating Policy...")
+    logger.debug("main - Creating Policy...")
     policy_task = Policy.options(**cfg.services.policy).as_service(**cfg.policy)
-    print("[DEBUG main] - Creating RLTrainer...")
+    logger.debug("main - Creating RLTrainer...")
     trainer_task = RLTrainer.options(**cfg.actors.trainer).as_actor(
         **cfg.trainer, loss=dapo_loss
     )
-    print("[DEBUG main] - Creating ReplayBuffer...")
+    logger.debug("main - Creating ReplayBuffer...")
     replay_task = ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
         **cfg.replay_buffer, collate=collate
     )
-    print("[DEBUG main] - Creating ComputeAdvantages...")
+    logger.debug("main - Creating ComputeAdvantages...")
     advantages_task = ComputeAdvantages.options(
         **cfg.actors.compute_advantages
     ).as_actor()
-    print("[DEBUG main] - Creating ReferenceModel...")
+    logger.debug("main - Creating ReferenceModel...")
     ref_model_task = ReferenceModel.options(**cfg.services.ref_model).as_service(
         **cfg.ref_model
     )
-    print("[DEBUG main] - Creating GenericRewardActor...")
+    logger.debug("main - Creating GenericRewardActor...")
     reward_task = GenericRewardActor.options(**cfg.services.reward_actor).as_service(
         env_actor=env_actor,
         build_action_fn=build_action_fn,
         evaluate_response_fn=evaluate_response_fn,
     )
 
-    print("[DEBUG main] All tasks created, now awaiting asyncio.gather...")
+    logger.debug("main All tasks created, now awaiting asyncio.gather...")
     (
         dataloader,
         policy,
@@ -602,7 +728,7 @@ async def main(cfg: DictConfig):
         ref_model_task,
         reward_task,
     )
-    print("[DEBUG main] asyncio.gather completed successfully!")
+    logger.debug("main asyncio.gather completed successfully!")
 
     max_steps = cfg.trainer.training.steps or -1
 
@@ -610,9 +736,13 @@ async def main(cfg: DictConfig):
     shutdown_event = asyncio.Event()
 
     # Initialize torchstore
+    logger.debug("main Initializing torchstore...")
     trainer_num_procs = cfg.actors.trainer["procs"]
     trainer_host_mesh_name = cfg.actors.trainer["mesh_name"]
     trainer_hosts = provisioner.get_host_mesh(trainer_host_mesh_name)
+    logger.debug(
+        f"main trainer_num_procs={trainer_num_procs}, mesh_name={trainer_host_mesh_name}"
+    )
     await ts.initialize(
         mesh=trainer_hosts.spawn_procs(per_host={"procs": trainer_num_procs}),
         strategy=ts.LocalRankStrategy(),
@@ -674,6 +804,16 @@ async def main(cfg: DictConfig):
             )
             t.step("reference_model_calculate_logprobs")
 
+            # Defensive check: ensure ref_logprobs is a tensor
+            if not isinstance(ref_logprobs, torch.Tensor):
+                logger.error(
+                    f"ERROR: ref_model.forward.route() returned unexpected type: {type(ref_logprobs)}, "
+                    f"value: {ref_logprobs}. Expected torch.Tensor."
+                )
+                raise TypeError(
+                    f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
+                )
+
             for i, episode in enumerate(episodes):
                 episode.ref_logprobs = ref_logprobs[i]
             del ref_logprobs, input_ids
@@ -693,6 +833,11 @@ async def main(cfg: DictConfig):
         training_step = 0
         restart_tracer = True
 
+        # Timeout protection: detect when buffer sampling hangs
+        sample_timeout_s = cfg.get("sample_timeout_s", 300)  # Default 5 minutes
+        sample_wait_start = None
+        consecutive_none_count = 0
+
         while max_steps == -1 or training_step < max_steps:
             if restart_tracer:
                 t = Tracer("main_perf/continuous_training")
@@ -703,8 +848,67 @@ async def main(cfg: DictConfig):
                 curr_policy_version=training_step
             )
             if batch is None:
+                if sample_wait_start is None:
+                    sample_wait_start = time.time()
+                    logger.warning(
+                        f"[HANG DETECTION] Buffer returned None at step {training_step}. "
+                        f"Starting timeout timer ({sample_timeout_s}s)."
+                    )
+
+                consecutive_none_count += 1
+                elapsed = time.time() - sample_wait_start
+
+                # Log diagnostic info every 30 seconds
+                if consecutive_none_count % 300 == 0:  # 300 * 0.1s = 30s
+                    buffer_size = await replay_buffer._numel.call_one()
+                    generator_versions = await policy.get_version.route()
+                    generator_version = generator_versions[0] if generator_versions else None
+                    logger.warning(
+                        f"[HANG DETECTION] Still waiting for samples (elapsed: {elapsed:.1f}s):\n"
+                        f"  - Training step: {training_step}\n"
+                        f"  - Buffer size: {buffer_size}\n"
+                        f"  - Generator version: {generator_version}\n"
+                        f"  - Required policy version: {training_step}\n"
+                        f"  - max_policy_age: {cfg.replay_buffer.max_policy_age}\n"
+                        f"  - Consecutive None returns: {consecutive_none_count}"
+                    )
+
+                # Timeout exceeded
+                if elapsed > sample_timeout_s:
+                    buffer_size = await replay_buffer._numel.call_one()
+                    generator_versions = await policy.get_version.route()
+                    generator_version = generator_versions[0] if generator_versions else None
+                    error_msg = (
+                        f"\n{'='*80}\n"
+                        f"FATAL ERROR: Training loop hung waiting for buffer samples!\n"
+                        f"{'='*80}\n"
+                        f"Waited {elapsed:.1f}s for buffer.sample() to return data.\n\n"
+                        f"DIAGNOSIS:\n"
+                        f"  - Training step: {training_step}\n"
+                        f"  - Buffer size: {buffer_size}\n"
+                        f"  - Generator version: {generator_version}\n"
+                        f"  - Required policy version: {training_step}\n"
+                        f"  - max_policy_age: {cfg.replay_buffer.max_policy_age}\n\n"
+                        f"LIKELY CAUSE:\n"
+                        f"  If max_policy_age=0 and generator_version < training_step,\n"
+                        f"  this is a race condition between weight updates and buffer sampling.\n"
+                        f"  All episodes in the buffer have policy_version={generator_version},\n"
+                        f"  but eviction requires policy_version >= {training_step - cfg.replay_buffer.max_policy_age}.\n\n"
+                        f"SOLUTIONS:\n"
+                        f"  1. Set 'off_by_n' (max_policy_age) to 1 or higher in your config\n"
+                        f"  2. Increase 'sample_timeout_s' if weight updates are very slow\n"
+                        f"  3. Use faster GPUs or reduce model size to speed up weight updates\n"
+                        f"{'='*80}\n"
+                    )
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
                 await asyncio.sleep(0.1)
             else:
+                # Reset timeout tracking on successful sample
+                sample_wait_start = None
+                consecutive_none_count = 0
+
                 t.step("waiting_for_buffer")
 
                 inputs, targets = batch
@@ -746,7 +950,10 @@ async def main(cfg: DictConfig):
     except KeyboardInterrupt:
         print("Training interrupted by user")
     except Exception as e:
+        import traceback
         print(f"Training failed with error: {e}")
+        print("\nFull traceback:")
+        traceback.print_exc()
         raise
     finally:
         print("Shutting down... (this may take a few seconds)")
@@ -779,6 +986,10 @@ if __name__ == "__main__":
 
     @parse
     def _main(cfg):
+        os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
+        os.environ["NCCL_TIMEOUT_MS"] = "60000"  # 60 second timeout
+        os.environ["MONARCH_HOSTMESH_V1"] = "1"
+        os.environ["TORCHSTORE_RDMA_ENABLED"] = "1"
         asyncio.run(main(cfg))
 
     _main()

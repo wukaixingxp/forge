@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """Test how OmegaConf handles YAML tags."""
 
-from omegaconf import OmegaConf
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
+from omegaconf import OmegaConf
 
 # Create a test YAML with various tag formats
 test_yaml = """
