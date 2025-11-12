@@ -848,66 +848,9 @@ async def main(cfg: DictConfig):
                 curr_policy_version=training_step
             )
             if batch is None:
-                if sample_wait_start is None:
-                    sample_wait_start = time.time()
-                    logger.warning(
-                        f"[HANG DETECTION] Buffer returned None at step {training_step}. "
-                        f"Starting timeout timer ({sample_timeout_s}s)."
-                    )
-
-                consecutive_none_count += 1
-                elapsed = time.time() - sample_wait_start
-
-                # Log diagnostic info every 30 seconds
-                if consecutive_none_count % 300 == 0:  # 300 * 0.1s = 30s
-                    buffer_size = await replay_buffer._numel.call_one()
-                    generator_versions = await policy.get_version.route()
-                    generator_version = generator_versions[0] if generator_versions else None
-                    logger.warning(
-                        f"[HANG DETECTION] Still waiting for samples (elapsed: {elapsed:.1f}s):\n"
-                        f"  - Training step: {training_step}\n"
-                        f"  - Buffer size: {buffer_size}\n"
-                        f"  - Generator version: {generator_version}\n"
-                        f"  - Required policy version: {training_step}\n"
-                        f"  - max_policy_age: {cfg.replay_buffer.max_policy_age}\n"
-                        f"  - Consecutive None returns: {consecutive_none_count}"
-                    )
-
-                # Timeout exceeded
-                if elapsed > sample_timeout_s:
-                    buffer_size = await replay_buffer._numel.call_one()
-                    generator_versions = await policy.get_version.route()
-                    generator_version = generator_versions[0] if generator_versions else None
-                    error_msg = (
-                        f"\n{'='*80}\n"
-                        f"FATAL ERROR: Training loop hung waiting for buffer samples!\n"
-                        f"{'='*80}\n"
-                        f"Waited {elapsed:.1f}s for buffer.sample() to return data.\n\n"
-                        f"DIAGNOSIS:\n"
-                        f"  - Training step: {training_step}\n"
-                        f"  - Buffer size: {buffer_size}\n"
-                        f"  - Generator version: {generator_version}\n"
-                        f"  - Required policy version: {training_step}\n"
-                        f"  - max_policy_age: {cfg.replay_buffer.max_policy_age}\n\n"
-                        f"LIKELY CAUSE:\n"
-                        f"  If max_policy_age=0 and generator_version < training_step,\n"
-                        f"  this is a race condition between weight updates and buffer sampling.\n"
-                        f"  All episodes in the buffer have policy_version={generator_version},\n"
-                        f"  but eviction requires policy_version >= {training_step - cfg.replay_buffer.max_policy_age}.\n\n"
-                        f"SOLUTIONS:\n"
-                        f"  1. Set 'off_by_n' (max_policy_age) to 1 or higher in your config\n"
-                        f"  2. Increase 'sample_timeout_s' if weight updates are very slow\n"
-                        f"  3. Use faster GPUs or reduce model size to speed up weight updates\n"
-                        f"{'='*80}\n"
-                    )
-                    logger.error(error_msg)
-                    raise RuntimeError(error_msg)
-
-                await asyncio.sleep(0.1)
+                logger.debug("Running out of batch, now waiting")
+                await asyncio.sleep(1)
             else:
-                # Reset timeout tracking on successful sample
-                sample_wait_start = None
-                consecutive_none_count = 0
 
                 t.step("waiting_for_buffer")
 
@@ -951,6 +894,7 @@ async def main(cfg: DictConfig):
         print("Training interrupted by user")
     except Exception as e:
         import traceback
+
         print(f"Training failed with error: {e}")
         print("\nFull traceback:")
         traceback.print_exc()

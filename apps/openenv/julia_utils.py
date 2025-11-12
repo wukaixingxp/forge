@@ -21,21 +21,59 @@ def get_julia_system_prompt() -> str:
 
 Write a **single Julia function** that correctly solves the problem described below.
 
+CRITICAL - Julia is NOT Python! Use correct Julia syntax:
+- Use `lowercase()` NOT `tolower()`
+- Use `uppercase()` NOT `upper()`
+- Use `reverse()` NOT `rev()` or `reversed()`
+- Use `parse(Int, x)` or `Int(x)` for type conversion, NOT `int(x)`
+- Use `string()` for string conversion, NOT `str()`
+- Use `filter()` NOT `subset()`
+- Use `length()` NOT `len()`
+- Use `push!()` to append to arrays, NOT `append()`
+- String indexing: `str[i]` returns a Char, use `str[i:i]` for single-char String
+- Arrays are 1-indexed, NOT 0-indexed
+- Use `println()` NOT `print()` for line output
+- Use `Dict()` NOT `dict()`
+- Boolean operators: `&&` for AND, `||` for OR, `!` for NOT
+- Check string contains: `occursin(needle, haystack)` NOT `in` or `contains(haystack, needle)`
+
+Example - Convert string to uppercase and reverse:
+```julia
+function process_text(text::String)
+    upper_text = uppercase(text)  # NOT upper()
+    reversed_text = reverse(upper_text)  # NOT rev()
+    return reversed_text
+end
+```
+
+Example - Work with integers and arrays:
+```julia
+function sum_digits(n::Int)
+    total = 0
+    digits_arr = Int[]  # Empty array
+    while n > 0
+        digit = n % 10
+        push!(digits_arr, digit)  # NOT append()
+        total += digit
+        n = div(n, 10)
+    end
+    return total
+end
+```
+
 Rules:
-- The code must be syntactically correct and runnable as is.
-- Do not use arrow functions, ternary operators, or modern syntax that may cause issues.
-- Use only the Julia standard library.
-- Do **not** wrap the code in a module or add a `main` function.
-- Do **not** include any test code in your response.
-- Do **not** hardcode specific test cases or outputs — the function must work for general inputs.
-- The **function name must exactly match** the one used in the provided tests.
+- The code must be syntactically correct and runnable as is
+- Use only the Julia standard library
+- Do **not** wrap the code in a module or add a `main` function
+- Do **not** include any test code in your response
+- Do **not** hardcode specific test cases or outputs — the function must work for general inputs
+- The **function name must exactly match** the one used in the provided tests
 - Respond with **only the Julia function** and nothing else (no explanations, no comments, no extra text)
-- The function name must exactly match the one used in the provided tests.
-- Return only the Julia function.
-- character literal should not contain multiple characters.
-- take care of object types and mind that spaces matter in julia so cannot add random spaces
+- Character literal should not contain multiple characters
+- Take care of object types and mind that spaces matter in Julia
 
 Passing tests and clean, compilable code are rewarded. Hardcoding or failing tests is penalized.
+
 FORMAT YOUR RESPONSE AS:
 
 ```julia
@@ -141,6 +179,15 @@ def evaluate_julia_response(result, response: str, sample: Dict[str, Any]) -> fl
         print(code)
         print("-" * 80)
 
+        # Validate for common Python-like syntax errors
+        is_valid, validation_warnings = validate_julia_syntax(code)
+        if not is_valid:
+            print("SYNTAX VALIDATION WARNINGS:")
+            for warning in validation_warnings:
+                print(f"  {warning}")
+            print("-" * 80)
+            record_metric("reward/julia/syntax_warnings", len(validation_warnings), Reduce.SUM)
+
         # Extract reward from result
         reward = result.reward if result.reward is not None else 0.0
 
@@ -195,6 +242,51 @@ def extract_julia_code(response: str) -> str:
     text = re.sub(r"^```julia\s*\n?", "", response, flags=re.IGNORECASE)
     text = re.sub(r"\n?```\s*$", "", text)
     return text.strip()
+
+
+def validate_julia_syntax(code: str) -> tuple[bool, list[str]]:
+    """
+    Validate Julia code for common Python-like syntax errors.
+
+    Args:
+        code: Julia code string to validate
+
+    Returns:
+        Tuple of (is_valid, list of warning messages)
+    """
+    warnings = []
+
+    # Common Python functions that don't exist in Julia
+    python_functions = {
+        r'\btolower\(': 'tolower() -> use lowercase()',
+        r'\bupper\(': 'upper() -> use uppercase()',
+        r'\brev\(': 'rev() -> use reverse()',
+        r'\bint\(': 'int() -> use parse(Int, x) or Int(x)',
+        r'\bstr\(': 'str() -> use string()',
+        r'\blen\(': 'len() -> use length()',
+        r'\bsubset\(': 'subset() -> use filter()',
+        r'\bappend\(': 'append() -> use push!()',
+        r'\bdict\(': 'dict() -> use Dict()',
+        r'\breversed\(': 'reversed() -> use reverse()',
+        r'\.append\(': '.append() -> use push!()',
+        r'\.lower\(': '.lower() -> use lowercase()',
+        r'\.upper\(': '.upper() -> use uppercase()',
+    }
+
+    for pattern, suggestion in python_functions.items():
+        if re.search(pattern, code, re.IGNORECASE):
+            warnings.append(f"⚠ Found Python-like syntax: {suggestion}")
+
+    # Check for 0-indexing patterns (common Python mistake)
+    if re.search(r'\[\s*0\s*\]', code):
+        warnings.append("⚠ Found [0] indexing - Julia arrays are 1-indexed")
+
+    # Check for incomplete function definitions
+    if 'function' in code and not re.search(r'\bend\b', code):
+        warnings.append("⚠ Function missing 'end' keyword")
+
+    is_valid = len(warnings) == 0
+    return is_valid, warnings
 
 
 def transform_julia_sample(sample: Dict[str, Any], tokenizer) -> Dict[str, Any] | None:

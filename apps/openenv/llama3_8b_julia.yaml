@@ -8,7 +8,7 @@ batch_size: 2
 max_req_tokens: 1024
 max_res_tokens: 1024
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 4
+off_by_n: 1
 
 # Main loop configuration
 rollout_threads: 1
