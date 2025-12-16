@@ -97,7 +97,7 @@ First, download the model weights directly to the OilFS path. This should be don
 export HF_HOME=/mnt/wsfuse/teamforge/hf
 
 # Download the model (replace with your desired model)
-huggingface-cli download Qwen/Qwen3-8B --local-dir /mnt/wsfuse/teamforge/hf_artifacts/qwen3_8b
+hf download Qwen/Qwen3-8B --local-dir /mnt/wsfuse/teamforge/hf/qwen3_8b
 ```
 
 #### 2. Hydrate the HuggingFace Cache
@@ -120,4 +120,6 @@ Both cache and model files are stored under:
 - **Cache**: `/mnt/wsfuse/teamforge/hf` (set via `HF_HOME`)
 - **Model weights**: `/mnt/wsfuse/teamforge/hf/<model_name>`
 
-Make sure your MAST config files point to the correct paths in `hf_artifacts`.
+
+#### Weights & Biases
+If you are part of the torchforge team on WandB, then WandB will work out of the box; the link can be found in the MAST logs. If you are not part of the torchforge team on WandB, then you will need to set the "WANDB_API_KEY" environment variable to your WandB API key.

@@ -15,18 +15,17 @@ import uuid
 from typing import Any
 
 import monarch
-
 import torchx.specs as specs
 
 from forge.types import Launcher, LauncherConfig
 from monarch._rust_bindings.monarch_hyperactor.alloc import AllocConstraints
 from monarch._rust_bindings.monarch_hyperactor.channel import ChannelTransport
-
 from monarch._rust_bindings.monarch_hyperactor.config import configure
 from monarch._src.actor.allocator import RemoteAllocator, TorchXRemoteAllocInitializer
 from monarch.actor import Actor, endpoint, ProcMesh
 from monarch.tools import commands
 from monarch.tools.commands import create, info
+from monarch.tools.components import hyperactor
 from monarch.tools.config import Config, Workspace
 
 _MAST_AVAILABLE = False
@@ -124,27 +123,36 @@ class BaseLauncher:
 
 
 class Slurmlauncher(BaseLauncher):
+    def __init__(
+        self,
+        cfg: LauncherConfig,
+    ):
+        self.cfg = cfg
+
     async def initialize(self) -> None:
         # HostMesh currently requires explicit configuration
         # of the underlying transport from client to mesh.
         # This can be removed in the future once this has been removed.
-        configure(default_transport=ChannelTransport.Tcp)
+        configure(default_transport=ChannelTransport.TcpWithHostname)
 
     async def get_allocator(self, name: str, num_hosts: int) -> tuple[Any, Any, str]:
         appdef = hyperactor.host_mesh(
             image="test", meshes=[f"{name}:{num_hosts}:gpu.small"]
         )
         for role in appdef.roles:
-            # Note - this is hardcoded to SLURM
-            # We got this with sinfo
-            role.resource.memMB = 2062607
-            role.resource.cpu = 128
-            role.resource.gpu = 8
+            role.resource.memMB = self.cfg.memMB
+            role.resource.cpu = self.cfg.cpu
+            role.resource.gpu = self.cfg.gpu
 
         # Note - we cannot add in an empty workspace, so we create a fake temporary one
         temp_workspace = tempfile.mkdtemp(prefix="forge_workspace_")
         server_config = Config(
             scheduler="slurm",
+            scheduler_args={
+                "account": self.cfg.account,
+                "qos": self.cfg.qos,
+                "time": "72:00:00",
+            },
             appdef=appdef,
             workspace=monarch.tools.config.workspace.Workspace(dirs=[temp_workspace]),
         )
@@ -207,7 +215,7 @@ class MastLauncher(BaseLauncher):
         self.timeout_sec = 1 * 60 * 60  # Kill the job if idle for 1 hour
         self.user = getpass.getuser()
         self.work_dir = f"/home/{self.user}"
-        self.edittable_workspaces = ["forge"]
+        self.edittable_workspaces = ["torchforge"]
         self.remote_work_dir = "/packages/monarch_default_workspace/workspace/"
         self.editable_workspace_paths = [
             f"{self.work_dir}/{workspace}" for workspace in self.edittable_workspaces
@@ -234,7 +242,7 @@ class MastLauncher(BaseLauncher):
         return allocator, alloc_constraints, self.create_server_handle()
 
     async def remote_setup(self, procs: ProcMesh) -> None:
-        setup = procs.spawn(f"setup-{uuid.uuid1()}", MastSetupActor)
+        setup = procs.spawn("mast_setup", MastSetupActor)
         await setup.mount.call(mount_dst="/mnt/wsfuse")
 
     async def launch_mast_job(self):
@@ -249,8 +257,8 @@ class MastLauncher(BaseLauncher):
             scheduler_args={
                 "hpcIdentity": "hyper_monarch",
                 "hpcJobOncall": "monarch",
-                "hpcClusterUuid": "MastProdCluster",
-                "rmAttribution": "pytorch4all_clients_approved",
+                "hpcClusterUuid": "MastGenAICluster",
+                "rmAttribution": "msl_infra_hw_enab_agentrl",
             },
             appdef=self.build_appdef(),
             workspace=Workspace(
@@ -267,26 +275,22 @@ class MastLauncher(BaseLauncher):
 
     def add_additional_packages(self, packages: "Packages") -> "Packages":
         packages.add_package("oil.oilfs:stable")
-        packages.add_package("manifold.manifoldfs")
+        packages.add_package("manifold.manifoldfs:prod")
         return packages
 
     def build_appdef(self) -> specs.AppDef:
-
         # create the app definition for the worker
-        remote_end_python_path = ":".join(
-            [
-                f"{self.remote_work_dir}{workspace}"
-                for workspace in self.editable_workspace_paths
-            ]
-        )
+        additional_python_paths = [
+            f"{self.remote_work_dir}{workspace}"
+            for workspace in self.editable_workspace_paths
+        ]
+        additional_python_paths.append(self.remote_work_dir)
 
         default_envs = {
             **meta_hyperactor.DEFAULT_NVRT_ENVS,
             **meta_hyperactor.DEFAULT_NCCL_ENVS,
             **meta_hyperactor.DEFAULT_TORCH_ENVS,
-            **{
-                "TORCHX_RUN_PYTHONPATH": f"{remote_end_python_path}:{self.remote_work_dir}"
-            },
+            **{"TORCHX_RUN_PYTHONPATH": ":".join(additional_python_paths)},
             **{
                 "HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT_SECS": "600",
                 "HYPERACTOR_CODE_MAX_FRAME_LENGTH": "1073741824",
@@ -295,12 +299,12 @@ class MastLauncher(BaseLauncher):
                 "TORCHDYNAMO_VERBOSE": "1",
                 "VLLM_TORCH_COMPILE_LEVEL": "0",
                 "VLLM_USE_TRITON_FLASH_ATTN": "0",
-                "WANDB_MODE": "offline",
                 "HF_HUB_OFFLINE": "1",
-                "MONARCH_HOST_MESH_V1_REMOVE_ME_BEFORE_RELEASE": "1",
                 "TORCHSTORE_RDMA_ENABLED": "1",
                 "HF_HOME": "/mnt/wsfuse/teamforge/hf",
                 "TRANSFORMERS_OFFLINE": "1",
+                "FUSE_SRC": "ws://ws.ai.pci0ai/genai_fair_llm",
+                "FUSE_DST": "/mnt/wsfuse",
             },
         }
 
@@ -369,7 +373,7 @@ class MastLauncher(BaseLauncher):
         # Override with client-specific configuration
         client_role.name = "client"
         # Use the bootstrap script as entrypoint
-        client_role.entrypoint = "workspace/forge/.meta/mast/client_bootstrap.sh"
+        client_role.entrypoint = "workspace/torchforge/.meta/mast/client_bootstrap.sh"
 
         # Build args for the client role (passed to the bootstrap script)
         # These args will be passed to client_bootstrap.sh which forwards them to main.py
@@ -399,7 +403,7 @@ def get_launcher(cfg: LauncherConfig | None = None) -> BaseLauncher | None:
     if not cfg:
         return None
     if cfg.launcher == Launcher.SLURM:
-        return Slurmlauncher()
+        return Slurmlauncher(cfg)
     elif cfg.launcher == Launcher.MAST:
         if not _MAST_AVAILABLE:
             raise ValueError(

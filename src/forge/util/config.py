@@ -19,6 +19,9 @@ from omegaconf import DictConfig, OmegaConf
 OmegaConf.register_new_resolver("sum", lambda *args: sum(args), replace=True)
 OmegaConf.register_new_resolver("multiply", lambda a, b: a * b, replace=True)
 
+# Add support for boolean negation, e.g. ${not:${compile}}
+OmegaConf.register_new_resolver("not", lambda x: not x, replace=True)
+
 
 def _has_component(node: Any) -> bool:
     """Check if a node has a _component_ field."""
