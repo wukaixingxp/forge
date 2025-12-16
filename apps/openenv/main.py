@@ -252,6 +252,7 @@ class GenericRewardActor(ForgeActor):
     env_actor: GenericOpenEnvActor
     build_action_fn: Callable
     evaluate_response_fn: Callable
+    evaluation_timeout_s: float = 60.0  # Default 60 second timeout per evaluation
 
     @endpoint
     def setup(self):
@@ -260,12 +261,13 @@ class GenericRewardActor(ForgeActor):
         openenv_dir = Path(__file__).parent
         if str(openenv_dir) not in sys.path:
             sys.path.insert(0, str(openenv_dir))
+        logger.debug(f"GenericRewardActor.setup Timeout set to {self.evaluation_timeout_s}s")
         logger.debug("GenericRewardActor.setup Setup complete!")
 
     @endpoint
     async def evaluate_response(self, prompt: str, response: str, target: Any) -> float:
         """
-        Evaluate response using task-specific functions.
+        Evaluate response using task-specific functions with timeout protection.
 
         Args:
             prompt: The problem description
@@ -273,7 +275,7 @@ class GenericRewardActor(ForgeActor):
             target: The target/test data from dataset
 
         Returns:
-            Reward score
+            Reward score (0.0 if timeout or error)
         """
         try:
             # Build action using task-specific function
@@ -281,8 +283,12 @@ class GenericRewardActor(ForgeActor):
             sample = {"target": target}
             action = self.build_action_fn(response, sample)
 
-            # Execute in environment
-            result = await self.env_actor.execute.call_one(action)
+            # Execute in environment with timeout protection
+            # This prevents infinite loops in generated code from blocking training
+            result = await asyncio.wait_for(
+                self.env_actor.execute.call_one(action),
+                timeout=self.evaluation_timeout_s
+            )
 
             # Evaluate result using task-specific function
             reward = self.evaluate_response_fn(result, response, sample)
@@ -312,12 +318,17 @@ class GenericRewardActor(ForgeActor):
             return reward
 
         except asyncio.TimeoutError:
-            print("✗ Environment request timeout - Reward: 0.0")
-            record_metric("reward/timeout_errors", 1, Reduce.SUM)
+            # Code execution exceeded timeout (likely infinite loop)
+            logger.warning(
+                f"Evaluation timeout after {self.evaluation_timeout_s}s - likely infinite loop in generated code"
+            )
+            record_metric("reward/evaluate_response/timeout_count", 1, Reduce.SUM)
             return 0.0
+
         except Exception as e:
-            print(f"✗ Unexpected error in reward evaluation: {e} - Reward: 0.0")
-            record_metric("reward/evaluation_errors", 1, Reduce.SUM)
+            # Other errors (syntax errors, runtime errors, etc.)
+            logger.error(f"Evaluation error: {e}")
+            record_metric("reward/evaluate_response/error_count", 1, Reduce.SUM)
             return 0.0
 
 
@@ -704,10 +715,16 @@ async def main(cfg: DictConfig):
         **cfg.ref_model
     )
     logger.debug("main - Creating GenericRewardActor...")
+
+    # Get evaluation timeout from config (default 60 seconds)
+    evaluation_timeout_s = cfg.get("evaluation_timeout_s", 60.0)
+    logger.debug(f"main Using evaluation_timeout_s={evaluation_timeout_s}")
+
     reward_task = GenericRewardActor.options(**cfg.services.reward_actor).as_service(
         env_actor=env_actor,
         build_action_fn=build_action_fn,
         evaluate_response_fn=evaluate_response_fn,
+        evaluation_timeout_s=evaluation_timeout_s,
     )
 
     logger.debug("main All tasks created, now awaiting asyncio.gather...")
@@ -773,6 +790,7 @@ async def main(cfg: DictConfig):
                 dtype=torch.long,
             )
 
+            # Sequential reward evaluation (like GRPO) - avoids timeout amplification
             for i, response in enumerate(responses):
                 episode = Episode(
                     episode_id=str(uuid.uuid4()),
@@ -782,18 +800,17 @@ async def main(cfg: DictConfig):
                     target=target,
                     completion=response,
                 )
-                episodes.append(episode)
 
-            reward_tasks = [
-                reward_actor.evaluate_response.route(
+                # Evaluate reward immediately (sequential, not parallel)
+                # This prevents asyncio.gather() from waiting for ALL requests
+                # when some timeout, reducing 480s timeouts to faster failures
+                episode.reward = await reward_actor.evaluate_response.route(
                     prompt=prompt, response=response.text, target=target
                 )
-                for response in responses
-            ]
-            rewards = await asyncio.gather(*reward_tasks)
 
-            for i, (episode, reward) in enumerate(zip(episodes, rewards)):
-                episode.reward = reward
+                episodes.append(episode)
+
+                # Build input_ids for ref model
                 input_ids[i, :max_req_tokens] = episode.request_tensor
                 input_ids[i, max_req_tokens:] = episode.response_tensor
 
@@ -833,6 +850,12 @@ async def main(cfg: DictConfig):
         training_step = 0
         restart_tracer = True
 
+        # Progress monitoring: detect training stalls
+        last_progress_time = time.time()
+        last_logged_step = -1
+        stall_warning_threshold_s = 300  # Warn after 5 minutes of no progress
+        stall_error_threshold_s = 600  # Error after 10 minutes of no progress
+
         # Timeout protection: detect when buffer sampling hangs
         sample_timeout_s = cfg.get("sample_timeout_s", 300)  # Default 5 minutes
         sample_wait_start = None
@@ -844,12 +867,51 @@ async def main(cfg: DictConfig):
                 t.start()
                 restart_tracer = False
 
+            # Check for training stalls (no progress for extended period)
+            current_time = time.time()
+            time_since_progress = current_time - last_progress_time
+
+            if training_step > last_logged_step:
+                # Progress made - reset monitoring
+                last_progress_time = current_time
+                last_logged_step = training_step
+            elif time_since_progress > stall_error_threshold_s:
+                # No progress for 10+ minutes - critical stall
+                logger.error(
+                    f"CRITICAL: Training stalled at step {training_step} for {time_since_progress:.1f}s. "
+                    f"No progress since step {last_logged_step}. This may indicate:"
+                    f"\n  - Trainer is hung/blocked"
+                    f"\n  - Replay buffer is empty or stuck"
+                    f"\n  - vLLM cache corruption preventing new episodes"
+                    f"\n  - Deadlock in weight synchronization"
+                )
+                record_metric("training/stall_detected", 1, Reduce.SUM)
+                # Force cache reset on policy to recover
+                try:
+                    logger.info("Attempting emergency vLLM cache reset...")
+                    await policy._reset_prefix_cache.fanout()
+                    logger.info("Emergency cache reset completed")
+                    last_progress_time = current_time  # Reset timer after intervention
+                except Exception as e:
+                    logger.error(f"Failed to reset vLLM cache: {e}")
+                    raise RuntimeError(
+                        f"Training stalled for {time_since_progress:.1f}s at step {training_step}. "
+                        "Emergency cache reset failed. Manual intervention required."
+                    )
+            elif time_since_progress > stall_warning_threshold_s:
+                # No progress for 5+ minutes - warning
+                if int(time_since_progress) % 60 == 0:  # Log once per minute
+                    logger.warning(
+                        f"Training slow: no progress at step {training_step} for {time_since_progress:.1f}s"
+                    )
+                    record_metric("training/slow_progress_warnings", 1, Reduce.SUM)
+
             batch = await replay_buffer.sample.call_one(
                 curr_policy_version=training_step
             )
             if batch is None:
                 logger.debug("Running out of batch, now waiting")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)  # Match GRPO's 100ms (was 1s)
             else:
 
                 t.step("waiting_for_buffer")

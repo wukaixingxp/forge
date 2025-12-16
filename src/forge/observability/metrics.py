@@ -829,19 +829,69 @@ class WandbBackend(LoggerBackend):
     async def _init_global(self, run_name: str | None):
         import wandb
 
-        self.run = wandb.init(name=run_name, **self.backend_kwargs)
+        # Extract and merge settings to avoid conflicts with backend_kwargs
+        existing_settings = self.backend_kwargs.pop("settings", None)
+        if existing_settings:
+            # Merge existing settings dict with our override
+            if isinstance(existing_settings, dict):
+                # Disable requirements saving to avoid TypeError with malformed packages
+                existing_settings["x_save_requirements"] = False
+                settings = wandb.Settings(**existing_settings)
+            else:
+                # It's already a Settings object, update it
+                settings = existing_settings
+                settings.update(x_save_requirements=False)
+        else:
+            # Create new settings with requirements saving disabled
+            settings = wandb.Settings(x_save_requirements=False)
+
+        self.run = wandb.init(name=run_name, settings=settings, **self.backend_kwargs)
 
     async def _init_per_rank(self, run_name: str):
         import wandb
 
-        self.run = wandb.init(name=run_name, **self.backend_kwargs)
+        # Extract and merge settings to avoid conflicts with backend_kwargs
+        existing_settings = self.backend_kwargs.pop("settings", None)
+        if existing_settings:
+            # Merge existing settings dict with our override
+            if isinstance(existing_settings, dict):
+                # Disable requirements saving to avoid TypeError with malformed packages
+                existing_settings["x_save_requirements"] = False
+                settings = wandb.Settings(**existing_settings)
+            else:
+                # It's already a Settings object, update it
+                settings = existing_settings
+                settings.update(x_save_requirements=False)
+        else:
+            # Create new settings with requirements saving disabled
+            settings = wandb.Settings(x_save_requirements=False)
+
+        self.run = wandb.init(name=run_name, settings=settings, **self.backend_kwargs)
 
     async def _init_shared_global(self, run_name: str | None):
         import wandb
 
-        settings = wandb.Settings(
-            mode="shared", x_primary=True, x_label="controller_primary"
-        )
+        # Extract and merge settings to avoid conflicts with backend_kwargs
+        existing_settings = self.backend_kwargs.pop("settings", None)
+        if existing_settings:
+            if isinstance(existing_settings, dict):
+                existing_settings.update({
+                    "mode": "shared",
+                    "x_primary": True,
+                    "x_label": "controller_primary",
+                    "x_save_requirements": False  # Disable to avoid TypeError with malformed packages
+                })
+                settings = wandb.Settings(**existing_settings)
+            else:
+                settings = existing_settings
+                settings.update(mode="shared", x_primary=True,
+                               x_label="controller_primary", x_save_requirements=False)
+        else:
+            settings = wandb.Settings(
+                mode="shared", x_primary=True, x_label="controller_primary",
+                x_save_requirements=False
+            )
+
         self.run = wandb.init(name=run_name, settings=settings, **self.backend_kwargs)
 
     async def _init_shared_local(
@@ -857,7 +907,27 @@ class WandbBackend(LoggerBackend):
 
         service_token.clear_service_in_env()
 
-        settings = wandb.Settings(mode="shared", x_primary=False, x_label=process_name)
+        # Extract and merge settings to avoid conflicts with backend_kwargs
+        existing_settings = self.backend_kwargs.pop("settings", None)
+        if existing_settings:
+            if isinstance(existing_settings, dict):
+                existing_settings.update({
+                    "mode": "shared",
+                    "x_primary": False,
+                    "x_label": process_name,
+                    "x_save_requirements": False  # Disable to avoid TypeError with malformed packages
+                })
+                settings = wandb.Settings(**existing_settings)
+            else:
+                settings = existing_settings
+                settings.update(mode="shared", x_primary=False,
+                               x_label=process_name, x_save_requirements=False)
+        else:
+            settings = wandb.Settings(
+                mode="shared", x_primary=False, x_label=process_name,
+                x_save_requirements=False
+            )
+
         self.run = wandb.init(
             name=run_name, id=shared_id, settings=settings, **self.backend_kwargs
         )

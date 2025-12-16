@@ -3,16 +3,17 @@
 # >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
 
 # Global configuration
-group_size: 8
-batch_size: 2
+group_size: 16
+batch_size: 1
 max_req_tokens: 1024
 max_res_tokens: 1024
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 1
+off_by_n: 0  # Increased from 1 to tolerate older episodes and prevent buffer warnings
 
 # Main loop configuration
 rollout_threads: 1
 sample_timeout_s: 300  # Timeout for buffer sampling (allows time for slow episode generation)
+evaluation_timeout_s: 60.0  # Max time per code evaluation (prevents infinite loops from blocking training)
 
 # Task-specific configuration
 task:
@@ -42,14 +43,10 @@ dataset:
 # OpenEnv configuration for GenericOpenEnvActor
 openenv_config:
   docker_image: "julia-env:latest"
-  env_vars: {}
   container_timeout_s: 180.0
-  request_timeout_s: 180.0
-  container_memory_gb: 128
+  container_memory_gb: 1024  # Reduced from 128 to prevent OOM kills
   port: 8000
-  num_worker: 2
-  julia_max_workers: 32
-
+  num_worker: 16  # ADD THIS LINE - match julia_max_workers!  request_timeout_s: 60.0  # Increased from 30.0 to match evaluation_timeout_s
 # Policy configuration
 policy:
   prefetch_weights_to_shm: false  # Disable weight prefetching to avoid hanging
@@ -68,6 +65,10 @@ policy:
     max_tokens: ${max_res_tokens}
     temperature: 1.0
     top_p: 1.0
+    # Hard limits to prevent infinite generation and gibberish outputs
+    min_tokens: 10  # Ensure some minimal output
+    truncate_prompt_tokens: null  # Don't truncate prompts
+    include_stop_str_in_output: false
 
 # Trainer configuration
 trainer:
@@ -101,12 +102,12 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "checkpoint_llama3_8b_julia_openenv"
+    folder: "1115checkpoint_llama3_8b_julia_openenv_off0"
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
     interval: 150
-    async_mode: "disabled"
+    async_mode: "async"  # Enable async checkpointing to prevent 3min blocking saves
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
