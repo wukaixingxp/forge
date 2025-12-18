@@ -177,12 +177,12 @@ def build_julia_action(response: str, sample: Dict[str, Any]):
 
     Returns:
         JuliaAction instance with core code and test code
-    """
-    # Import AutoAction dynamically to avoid pickle issues
-    from envs import AutoAction
 
-    # Get JuliaAction class dynamically
-    JuliaAction = AutoAction.from_env("julia")
+    Note:
+        Requires julia_env to be in PYTHONPATH. Users can set this via:
+        export PYTHONPATH=/path/to/OpenEnv/envs:$PYTHONPATH
+    """
+    from julia_env import JuliaAction
 
     # Extract code from markdown if present
     code = extract_julia_code(response)

@@ -7,11 +7,11 @@
 import logging
 import socket
 import traceback
-from typing import Any, Dict, Generic, Optional, Type, TypeVar
+from typing import Any, Dict, Optional, Type
 
-from core.client_types import StepResult
-from core.env_server.types import Action, Observation
-from core.http_env_client import HTTPEnvClient
+from openenv.core.client_types import StepResult
+from openenv.core.env_server.types import Action, Observation
+from openenv.core.http_env_client import HTTPEnvClient
 from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
@@ -19,10 +19,6 @@ from forge.observability.metrics import record_metric, Reduce
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-# Type variables for generic action and observation types
-ActT = TypeVar("ActT", bound=Action)
-ObsT = TypeVar("ObsT", bound=Observation)
 
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
@@ -86,12 +82,12 @@ def find_available_port(
     )
 
 
-class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
+class GenericOpenEnvActor(ForgeActor):
     """A generic sandboxed execution environment using any OpenEnv environment.
 
     This actor provides a universal interface to work with ANY OpenEnv environment
-    (CodingEnv, GitEnv, AtariEnv, ChatEnv, etc.) by accepting the environment class
-    and action class as parameters.
+    (CodingEnv, GitEnv, AtariEnv, ChatEnv, etc.) by leveraging OpenEnv's AutoEnv
+    and AutoAction auto-discovery system.
 
     It automatically manages the entire container lifecycle including
     image startup, environment connection, and cleanup.
@@ -103,80 +99,36 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
 
     Dependencies:
     - Docker: Must be installed and running on the host.
-    - OpenEnv: The OpenEnv library must be in the PYTHONPATH.
+    - OpenEnv: The OpenEnv library with AutoEnv/AutoAction support.
     - Docker image: A compatible Docker image for the specific environment.
 
-    Args:
-        env_class: The OpenEnv client class (e.g., CodingEnv, GitEnv, AtariEnv).
-                  Must be a subclass of HTTPEnvClient[ActT, ObsT].
-        action_class: The action class for this environment (e.g., CodeAction, GitAction).
-                     Used for type validation and construction helpers.
-        docker_image: Docker image to use for the environment (e.g., "coding-env:latest").
-        env_vars: Optional dictionary of environment variables to pass to the container.
-                 For example: {"PYTHON_ADDITIONAL_IMPORTS": "sys,os,json"} for CodingEnv.
-        container_timeout_s: Timeout for container startup in seconds (default: 180.0).
-        request_timeout_s: Timeout for individual requests in seconds (default: 120.0).
-        port: Preferred port for the container (default: 8000).
-        container_memory_gb: Memory limit for the container in GB (default: 16GB).
-        enable_zombie_cleanup: Whether to enable zombie process cleanup (default: False).
-                              Only relevant for code execution environments.
+    Usage (Recommended - using from_env_name with AutoEnv):
+        >>> actor = GenericOpenEnvActor.from_env_name(
+        ...     env_name="coding",  # AutoEnv discovers CodingEnv automatically
+        ...     docker_image="coding-env:latest",
+        ... )
+        >>> await actor.setup()
+        >>> action = actor.create_action(code="print('hello')")
+        >>> result = await actor.execute(action)
+        >>> await actor.teardown()
 
-    Example Usage:
-
-        # CodingEnv example
-        from envs.coding_env import CodingEnv, CodeAction
-
-        actor = GenericOpenEnvActor(
-            env_class=CodingEnv,
-            action_class=CodeAction,
-            docker_image="coding-env:latest",
-            env_vars={"PYTHON_ADDITIONAL_IMPORTS": "sys,os"},
-        )
-        await actor.setup()
-
-        action = CodeAction(code="print('hello')")
-        result = await actor.execute(action)
-        print(result.observation.stdout)
-
-        await actor.teardown()
-
-        # GitEnv example
-        from envs.git_env import GitEnv, GitAction
-
-        actor = GenericOpenEnvActor(
-            env_class=GitEnv,
-            action_class=GitAction,
-            docker_image="git-env:latest",
-        )
-        await actor.setup()
-
-        action = GitAction(action_type="list_repos")
-        result = await actor.execute(action)
-        print(result.observation.repos)
-
-        await actor.teardown()
-
-        # AtariEnv example
-        from envs.atari_env import AtariEnv, AtariAction
-
-        actor = GenericOpenEnvActor(
-            env_class=AtariEnv,
-            action_class=AtariAction,
-            docker_image="atari-env:latest",
-        )
-        await actor.setup()
-
-        action = AtariAction(action_id=1, game_name="pong")
-        result = await actor.execute(action)
-        print(f"Reward: {result.reward}, Done: {result.done}")
-
-        await actor.teardown()
+    Usage (Explicit - for advanced use cases):
+        >>> from coding_env import CodingEnv, CodeAction
+        >>> actor = GenericOpenEnvActor(
+        ...     env_class=CodingEnv,
+        ...     action_class=CodeAction,
+        ...     docker_image="coding-env:latest",
+        ... )
+        >>> await actor.setup()
+        >>> action = CodeAction(code="print('hello')")
+        >>> result = await actor.execute(action)
+        >>> await actor.teardown()
     """
 
     def __init__(
         self,
-        env_class: Type[HTTPEnvClient[ActT, ObsT]],
-        action_class: Type[ActT],
+        env_class: Type[HTTPEnvClient],
+        action_class: Type[Action],
         docker_image: str,
         env_vars: Optional[Dict[str, str]] = None,
         container_timeout_s: float = 180.0,
@@ -194,7 +146,184 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
         self.port = port
         self.container_memory_gb = container_memory_gb
         self.enable_zombie_cleanup = enable_zombie_cleanup
-        self.client: Optional[HTTPEnvClient[ActT, ObsT]] = None
+        self.client: Optional[HTTPEnvClient] = None
+
+    @classmethod
+    def get_init_kwargs_from_env_name(
+        cls,
+        env_name: str,
+        docker_image: Optional[str] = None,
+        env_vars: Optional[Dict[str, str]] = None,
+        container_timeout_s: float = 180.0,
+        request_timeout_s: float = 120.0,
+        port: int = 8000,
+        container_memory_gb: int = 4,
+        enable_zombie_cleanup: bool = False,
+    ) -> Dict[str, Any]:
+        """Get initialization kwargs from AutoEnv discovery.
+
+        This is a helper method specifically designed for Monarch actor deployment.
+        It uses OpenEnv's AutoEnv/AutoAction system to automatically discover
+        environment and action classes. Supports all environments registered
+        with OpenEnv without needing code changes.
+
+        Args:
+            env_name: Environment name (e.g., "coding", "julia", "git", "atari")
+                     AutoEnv handles name variations automatically.
+            docker_image: Docker image to use. If None, uses default from environment metadata.
+            env_vars: Optional environment variables for the container.
+            container_timeout_s: Timeout for container startup in seconds.
+            request_timeout_s: Timeout for individual requests in seconds.
+            port: Preferred port for the container.
+            container_memory_gb: Memory limit for the container in GB.
+            enable_zombie_cleanup: Whether to enable zombie process cleanup.
+
+        Returns:
+            Dictionary of initialization kwargs for GenericOpenEnvActor
+
+        Example (Monarch deployment):
+            >>> env_actor = await GenericOpenEnvActor.options(...).as_actor(
+            ...     **GenericOpenEnvActor.get_init_kwargs_from_env_name(
+            ...         env_name="coding",  # or "julia", "git", etc.
+            ...         docker_image="coding-env:latest",
+            ...     )
+            ... )
+        """
+        from openenv.auto import AutoAction, AutoEnv
+
+        env_class = None
+        action_class = None
+
+        # Try AutoEnv/AutoAction first (future-proof approach)
+        try:
+            env_class = AutoEnv.get_env_class(env_name)
+            action_class = AutoAction.from_env(env_name)
+
+            # Get default docker image from environment metadata if not specified
+            if docker_image is None:
+                env_info = AutoEnv.get_env_info(env_name)
+                docker_image = env_info.get("default_image", f"{env_name}-env:latest")
+
+        except (ValueError, ImportError, AttributeError) as auto_error:
+            # AutoEnv discovery failed - try direct imports as fallback
+            # This handles cases where environments aren't yet registered with AutoEnv
+            logger.debug(
+                f"AutoEnv discovery failed for '{env_name}': {auto_error}. "
+                f"Falling back to direct import."
+            )
+
+            # Normalize environment name (handle -env and _env suffixes)
+            env_key = env_name.replace("-env", "").replace("_env", "")
+
+            # Try direct imports for known environments
+            if env_key in ["coding", "code"]:
+                try:
+                    from coding_env import CodeAction, CodingEnv
+
+                    env_class = CodingEnv
+                    action_class = CodeAction
+                    if docker_image is None:
+                        docker_image = "coding-env:latest"
+                except ImportError as e:
+                    logger.warning(f"Failed to import coding_env: {e}")
+
+            elif env_key in ["julia"]:
+                try:
+                    from julia_env import JuliaAction, JuliaEnv
+
+                    env_class = JuliaEnv
+                    action_class = JuliaAction
+                    if docker_image is None:
+                        docker_image = "julia-env:latest"
+                except ImportError as e:
+                    logger.warning(f"Failed to import julia_env: {e}")
+
+            # If fallback also failed, raise the original AutoEnv error
+            if env_class is None or action_class is None:
+                raise ValueError(
+                    f"Failed to load environment '{env_name}'. "
+                    f"AutoEnv discovery failed ({auto_error}), "
+                    f"and direct import fallback also failed. "
+                    f"Please ensure the environment is properly installed."
+                )
+
+        # Return the kwargs dictionary
+        return {
+            "env_class": env_class,
+            "action_class": action_class,
+            "docker_image": docker_image,
+            "env_vars": env_vars,
+            "container_timeout_s": container_timeout_s,
+            "request_timeout_s": request_timeout_s,
+            "port": port,
+            "container_memory_gb": container_memory_gb,
+            "enable_zombie_cleanup": enable_zombie_cleanup,
+        }
+
+    @classmethod
+    def from_env_name(
+        cls,
+        env_name: str,
+        docker_image: Optional[str] = None,
+        env_vars: Optional[Dict[str, str]] = None,
+        container_timeout_s: float = 180.0,
+        request_timeout_s: float = 120.0,
+        port: int = 8000,
+        container_memory_gb: int = 4,
+        enable_zombie_cleanup: bool = False,
+    ):
+        """Create a GenericOpenEnvActor from an environment name using AutoEnv/AutoAction.
+
+        This method uses OpenEnv's auto-discovery system to automatically find
+        and load the appropriate environment and action classes. It supports
+        all environments registered with OpenEnv.
+
+        Args:
+            env_name: Environment name (e.g., "coding", "julia", "git", "atari", etc.)
+                     AutoEnv handles name variations like "coding", "coding-env",
+                     "coding_env" automatically.
+            docker_image: Docker image to use. If None, uses default from environment.
+            env_vars: Optional environment variables for the container.
+            container_timeout_s: Timeout for container startup in seconds.
+            request_timeout_s: Timeout for individual requests in seconds.
+            port: Preferred port for the container.
+            container_memory_gb: Memory limit for the container in GB.
+            enable_zombie_cleanup: Whether to enable zombie process cleanup.
+
+        Returns:
+            GenericOpenEnvActor instance
+
+        Example:
+            >>> # Simple usage - just specify the environment name
+            >>> actor = GenericOpenEnvActor.from_env_name(
+            ...     env_name="coding",
+            ...     docker_image="coding-env:latest",
+            ... )
+            >>> await actor.setup()
+            >>> action = actor.create_action(code="print('hello')")
+            >>> result = await actor.execute(action)
+
+        Note:
+            This method uses AutoEnv and AutoAction from OpenEnv, which automatically
+            discovers environments from:
+            - Local environment packages in openenv/src/envs/
+            - Environment metadata in openenv.yaml manifests
+            - Convention-based directory structures
+        """
+        # Use the helper method to get initialization kwargs
+        init_kwargs = cls.get_init_kwargs_from_env_name(
+            env_name=env_name,
+            docker_image=docker_image,
+            env_vars=env_vars,
+            container_timeout_s=container_timeout_s,
+            request_timeout_s=request_timeout_s,
+            port=port,
+            container_memory_gb=container_memory_gb,
+            enable_zombie_cleanup=enable_zombie_cleanup,
+        )
+
+        # Create instance using the main constructor
+        return cls(**init_kwargs)
 
     @endpoint
     async def setup(self):
@@ -263,7 +392,7 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
         logging.debug("Environment reset.")
 
     @endpoint
-    async def execute(self, action: ActT) -> StepResult[ObsT]:
+    async def execute(self, action: Action) -> StepResult:
         """Executes an action inside the environment and returns the result.
 
         Args:
@@ -564,7 +693,7 @@ class GenericOpenEnvActor(ForgeActor, Generic[ActT, ObsT]):
             self.client = None
             logging.debug("Cleanup complete.")
 
-    def create_action(self, **kwargs) -> ActT:
+    def create_action(self, **kwargs) -> Action:
         """Helper method to create an action for this environment.
 
         Args:

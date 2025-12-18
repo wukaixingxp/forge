@@ -27,9 +27,9 @@ from typing import Any, Callable
 # CRITICAL: Add openenv directory to sys.path at module level
 # This ensures that when remote actors unpickle function references (e.g., julia_utils functions),
 # the module can be imported successfully. This must happen BEFORE any actor definitions.
-_openenv_dir = Path(__file__).parent
-if str(_openenv_dir) not in sys.path:
-    sys.path.insert(0, str(_openenv_dir))
+_appdir = Path(__file__).parent
+if str(_appdir) not in sys.path:
+    sys.path.insert(0, str(_appdir))
 
 import torch
 import torch.nn.functional as F
@@ -261,7 +261,9 @@ class GenericRewardActor(ForgeActor):
         openenv_dir = Path(__file__).parent
         if str(openenv_dir) not in sys.path:
             sys.path.insert(0, str(openenv_dir))
-        logger.debug(f"GenericRewardActor.setup Timeout set to {self.evaluation_timeout_s}s")
+        logger.debug(
+            f"GenericRewardActor.setup Timeout set to {self.evaluation_timeout_s}s"
+        )
         logger.debug("GenericRewardActor.setup Setup complete!")
 
     @endpoint
@@ -287,7 +289,7 @@ class GenericRewardActor(ForgeActor):
             # This prevents infinite loops in generated code from blocking training
             result = await asyncio.wait_for(
                 self.env_actor.execute.call_one(action),
-                timeout=self.evaluation_timeout_s
+                timeout=self.evaluation_timeout_s,
             )
 
             # Evaluate result using task-specific function
@@ -622,12 +624,8 @@ async def main(cfg: DictConfig):
             f"{'='*80}\n"
         )
 
-    # Get env class and action class from task config
-    from envs import AutoAction, AutoEnv
-
+    # Get env name from task config
     env_name = task_config.env_name
-    env_class = AutoEnv.from_name(env_name)
-    action_class = AutoAction.from_env(env_name)
 
     # Global setups
     provisioner = None
@@ -642,9 +640,9 @@ async def main(cfg: DictConfig):
     mlogger = await get_or_create_metric_logger(process_name="Controller")
     await mlogger.init_backends.call_one(metric_logging_cfg)
 
-    # Setup environment using GenericOpenEnvActor
+    # Setup environment using GenericOpenEnvActor.from_env_name()
     openenv_config = cfg.get("openenv_config", {})
-    docker_image = openenv_config.get("docker_image", "julia-env:latest")
+    docker_image = openenv_config.get("docker_image", None)
     env_vars = openenv_config.get("env_vars", {})
     container_timeout_s = openenv_config.get("container_timeout_s", 180.0)
     request_timeout_s = openenv_config.get("request_timeout_s", 120.0)
@@ -672,17 +670,19 @@ async def main(cfg: DictConfig):
                 f"main Set PYTHON_ADDITIONAL_IMPORTS: {env_vars['PYTHON_ADDITIONAL_IMPORTS']}"
             )
 
-    logger.debug("main Initializing GenericOpenEnvActor...")
+    logger.debug(f"main Initializing GenericOpenEnvActor for env_name={env_name}...")
+    # Deploy as Monarch actor using get_init_kwargs_from_env_name helper
     env_actor = await GenericOpenEnvActor.options(
         **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
     ).as_actor(
-        env_class=env_class,
-        action_class=action_class,
-        docker_image=docker_image,
-        env_vars=env_vars,
-        container_timeout_s=container_timeout_s,
-        request_timeout_s=request_timeout_s,
-        container_memory_gb=container_memory_gb,
+        **GenericOpenEnvActor.get_init_kwargs_from_env_name(
+            env_name=env_name,
+            docker_image=docker_image,
+            env_vars=env_vars,
+            container_timeout_s=container_timeout_s,
+            request_timeout_s=request_timeout_s,
+            container_memory_gb=container_memory_gb,
+        )
     )
     logger.debug("main GenericOpenEnvActor initialized successfully")
 

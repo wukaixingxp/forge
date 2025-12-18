@@ -34,7 +34,10 @@ metric_logging:
 
 # Dataset configuration
 dataset:
-  path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
+  # TODO: Replace with your dataset path
+  # Example: path: "/path/to/your/julia_trainset.parquet"
+  # Or use HuggingFace dataset: path: "your-org/your-dataset"
+  path: "path/to/julia_trainset.parquet"
   revision: "main"
   data_split: "train"
   streaming: false

@@ -79,11 +79,12 @@ def build_python_action(response: str, sample: Dict[str, Any]):
     Returns:
         CodingAction instance with code and test_code
     """
-    # Import AutoAction dynamically to avoid pickle issues
-    from envs import AutoAction
-
-    # Get CodingAction class dynamically
-    CodingAction = AutoAction.from_env("coding")
+    # Import CodeAction directly from coding_env
+    # NOTE: We use direct import instead of AutoAction.from_env() because:
+    # 1. Direct imports are faster (no discovery overhead)
+    # 2. More reliable in distributed/multi-process environments
+    # 3. Explicit is better than implicit
+    from coding_env import CodeAction
 
     # Extract code from markdown if present
     code = extract_python_code(response)
@@ -91,7 +92,7 @@ def build_python_action(response: str, sample: Dict[str, Any]):
     # Get test code if available
     test_code = sample.get("target", "")
 
-    return CodingAction(code=code, test_code=test_code)
+    return CodeAction(code=code, test_code=test_code)
 
 
 def evaluate_python_response(result, response: str, sample: Dict[str, Any]) -> float:

@@ -3,12 +3,12 @@
 # >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_coding.yaml
 
 # Global configuration
-group_size: 8
-batch_size: 4
+group_size: 16
+batch_size: 1
 max_req_tokens: 1024
 max_res_tokens: 2048
 model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 2
+off_by_n: 1
 
 # Main loop configuration
 rollout_threads: 1
@@ -50,7 +50,7 @@ openenv_config:
   env_vars: {}
   container_timeout_s: 120.0
   request_timeout_s: 60.0
-  container_memory_gb: 64
+  container_memory_gb: 128
   port: 8000
   num_worker: 4
   # Additional imports to authorize in Python environment (same as coding-grpo)
@@ -131,7 +131,7 @@ trainer:
     hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 5e-6
+    lr: 1e-5
     eps: 1e-8
   lr_scheduler:
     warmup_steps: 0
@@ -139,7 +139,7 @@ trainer:
     local_batch_size: ${multiply:${batch_size},${group_size}}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
     max_norm: 1.0
-    steps: 100
+    steps: 1500
     dtype: bfloat16
     gc_freq: 1
   compile:
