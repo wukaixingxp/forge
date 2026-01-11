@@ -36,10 +36,7 @@ import torch.nn.functional as F
 import torchstore as ts
 import yaml
 from datasets import load_dataset
-from forge.actors._torchstore_utils import (
-    get_dcp_whole_state_dict_key,
-    get_param_prefix,
-)
+from forge.util.checkpoint import drop_weights
 from forge.actors.generator import Generator
 from forge.actors.generic_openenv import GenericOpenEnvActor
 from forge.actors.reference_model import ReferenceModel
@@ -255,7 +252,7 @@ class GenericRewardActor(ForgeActor):
     evaluation_timeout_s: float = 60.0  # Default 60 second timeout per evaluation
 
     @endpoint
-    def setup(self):
+    async def setup(self):
         """Ensure the openenv directory is in sys.path for imports."""
         logger.debug("GenericRewardActor.setup Starting setup...")
         openenv_dir = Path(__file__).parent
@@ -337,7 +334,7 @@ class GenericRewardActor(ForgeActor):
 @dataclass
 class ComputeAdvantages(ForgeActor):
     @endpoint
-    def setup(self):
+    async def setup(self):
         logger.debug("ComputeAdvantages.setup Setup complete!")
 
     @endpoint
@@ -361,7 +358,7 @@ class GenericDatasetActor(ForgeActor):
     transform_sample_fn: Callable | None = None
 
     @endpoint
-    def setup(self):
+    async def setup(self):
         """Ensure the openenv directory is in sys.path for imports."""
         openenv_dir = Path(__file__).parent
         if str(openenv_dir) not in sys.path:
@@ -507,21 +504,6 @@ class GenericDatasetActor(ForgeActor):
             return self._tokenizer.pad_token_id
         else:
             return self._tokenizer.eos_token_id
-
-
-async def drop_weights(version: int):
-    print(f"Dropping weights @ version {version}")
-    start_time = time.perf_counter()
-    prefix = get_param_prefix(version)
-    matching_keys = await ts.keys(prefix)
-    dcp_key = get_dcp_whole_state_dict_key(version)
-    if dcp_key in matching_keys:
-        dcp_handle = await ts.get(dcp_key)
-        dcp_handle.drop()
-    for key in matching_keys:
-        await ts.delete(key)
-    elapsed = time.perf_counter() - start_time
-    print(f"Dropped weights @ version {version}, took {elapsed:.2f} seconds")
 
 
 async def main(cfg: DictConfig):

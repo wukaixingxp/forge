@@ -27,9 +27,14 @@ from monarch.actor import (
     endpoint,
     HostMesh,
     ProcMesh,
-    shutdown_context,
     this_host,
 )
+
+# shutdown_context is only available in torchmonarch-nightly >= 2025.12.17
+try:
+    from monarch.actor import shutdown_context
+except ImportError:
+    shutdown_context = None  # type: ignore
 
 from monarch.tools import commands
 from monarch.utils import setup_env_for_distributed
@@ -503,10 +508,11 @@ class Provisioner:
             if isinstance(result, Exception):
                 logger.warning(f"Failed to shutdown HostMesh {name}: {result}")
         self._host_mesh_map.clear()
-        try:
-            await shutdown_context()
-        except Exception as e:
-            logger.warning(f"Failed to shutdown context: {e}")
+        if shutdown_context is not None:
+            try:
+                await shutdown_context()
+            except Exception as e:
+                logger.warning(f"Failed to shutdown context: {e}")
 
     async def shutdown(self):
         """Tears down all remaining remote allocations."""

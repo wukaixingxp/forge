@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Type
 
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import Action, Observation
-from openenv.core.http_env_client import HTTPEnvClient
+from openenv.core.env_client import EnvClient
 from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
@@ -127,7 +127,7 @@ class GenericOpenEnvActor(ForgeActor):
 
     def __init__(
         self,
-        env_class: Type[HTTPEnvClient],
+        env_class: Type[EnvClient],
         action_class: Type[Action],
         docker_image: str,
         env_vars: Optional[Dict[str, str]] = None,
@@ -146,7 +146,7 @@ class GenericOpenEnvActor(ForgeActor):
         self.port = port
         self.container_memory_gb = container_memory_gb
         self.enable_zombie_cleanup = enable_zombie_cleanup
-        self.client: Optional[HTTPEnvClient] = None
+        self.client: Optional[EnvClient] = None
 
     @classmethod
     def get_init_kwargs_from_env_name(
