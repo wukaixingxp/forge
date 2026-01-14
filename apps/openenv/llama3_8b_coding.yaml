@@ -47,62 +47,15 @@ dataset:
 # OpenEnv configuration for GenericOpenEnvActor
 openenv_config:
   docker_image: "coding-env:latest"
-  env_vars: {}
   container_timeout_s: 120.0
   request_timeout_s: 60.0
   container_memory_gb: 128
   port: 8000
   num_worker: 4
-  # Additional imports to authorize in Python environment (same as coding-grpo)
-  additional_imports:
-    # Core (default in app.py)
-    - sys
-    - os
-    - functools
-    - typing
-    # Data Science & Numerical
-    - numpy
-    # Data Structures & Collections
-    - dataclasses
-    - copy
-    - heapq
-    - enum
-    # String & Text Processing
-    - string
-    - ast
-    # Data Formats & Serialization
-    - json
-    - struct
-    - base64
-    - csv
-    # Math & Numbers
-    - math
-    - cmath
-    # Abstract Base Classes & Patterns
-    - abc
-    - contextlib
-    - inspect
-    # Security & Utilities
-    - secrets
-    - uuid
-    # I/O & Path Operations
-    - pathlib
-    - io
-    # Async & Concurrency
-    - threading
-    - asyncio
-    - concurrent.futures
-    # Network & Web
-    - urllib.parse
-    - socket
-    # Additional common imports
-    - random
-    - itertools
-    - collections
-    - time
-    - datetime
-    - re
-    - statistics
+  # Environment-specific env vars (no more hardcoding in main.py)
+  env_vars:
+    # Additional imports to authorize in Python environment
+    PYTHON_ADDITIONAL_IMPORTS: "sys,os,functools,typing,numpy,dataclasses,copy,heapq,enum,string,ast,json,struct,base64,csv,math,cmath,abc,contextlib,inspect,secrets,uuid,pathlib,io,threading,asyncio,concurrent.futures,urllib.parse,socket,random,itertools,collections,time,datetime,re,statistics"
 
 # Policy configuration
 policy:

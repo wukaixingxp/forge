@@ -47,9 +47,15 @@ dataset:
 openenv_config:
   docker_image: "julia-env:latest"
   container_timeout_s: 180.0
-  container_memory_gb: 1024  # Reduced from 128 to prevent OOM kills
+  container_memory_gb: 1024
   port: 8000
-  num_worker: 16  # ADD THIS LINE - match julia_max_workers!  request_timeout_s: 60.0  # Increased from 30.0 to match evaluation_timeout_s
+  num_worker: 16
+  request_timeout_s: 60.0
+  # Environment-specific env vars (no more hardcoding in main.py)
+  env_vars:
+    JULIA_MAX_WORKERS: "16"
+    JULIA_EXECUTION_TIMEOUT: "60"
+
 # Policy configuration
 policy:
   prefetch_weights_to_shm: false  # Disable weight prefetching to avoid hanging

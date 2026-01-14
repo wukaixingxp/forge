@@ -631,26 +631,12 @@ async def main(cfg: DictConfig):
     container_memory_gb = openenv_config.get("container_memory_gb", 4)
 
     # Set environment variables from config
+    # All env vars should be specified in YAML config under openenv_config.env_vars
+    # Only set PORT and NUM_WORKER as sensible defaults if not specified
     if "PORT" not in env_vars:
         env_vars["PORT"] = str(openenv_config.get("port", 8000))
     if "NUM_WORKER" not in env_vars:
         env_vars["NUM_WORKER"] = str(openenv_config.get("num_worker", 4))
-    if env_name == "julia" and "JULIA_MAX_WORKERS" not in env_vars:
-        env_vars["JULIA_MAX_WORKERS"] = str(openenv_config.get("julia_max_workers", 16))
-    # CRITICAL: Set execution timeout for Julia environment server
-    # This ensures the timeout inside the Docker container matches our config
-    if env_name == "julia" and "JULIA_EXECUTION_TIMEOUT" not in env_vars:
-        env_vars["JULIA_EXECUTION_TIMEOUT"] = str(int(request_timeout_s))
-
-    # Handle additional_imports for coding environment
-    if env_name == "coding" and "PYTHON_ADDITIONAL_IMPORTS" not in env_vars:
-        additional_imports = openenv_config.get("additional_imports", [])
-        if additional_imports:
-            # Convert list to comma-separated string
-            env_vars["PYTHON_ADDITIONAL_IMPORTS"] = ",".join(additional_imports)
-            logger.debug(
-                f"main Set PYTHON_ADDITIONAL_IMPORTS: {env_vars['PYTHON_ADDITIONAL_IMPORTS']}"
-            )
 
     logger.debug(f"main Initializing GenericOpenEnvActor for env_name={env_name}...")
     # Deploy as Monarch actor using get_init_kwargs_from_env_name helper
