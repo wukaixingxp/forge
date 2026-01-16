@@ -10,8 +10,9 @@ import traceback
 from typing import Any, Dict, Optional, Type
 
 from openenv.core.client_types import StepResult
-from openenv.core.env_server.types import Action, Observation
+from openenv.core.env_server.types import Action
 from openenv.core.env_client import EnvClient
+from openenv.core.generic_client import GenericEnvClient, GenericAction
 from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
@@ -189,13 +190,13 @@ class GenericOpenEnvActor(ForgeActor):
             ...     )
             ... )
         """
-        from openenv.auto import AutoAction, AutoEnv
-
         env_class = None
         action_class = None
 
         # Try AutoEnv/AutoAction first (future-proof approach)
         try:
+            from openenv import AutoEnv, AutoAction
+
             env_class = AutoEnv.get_env_class(env_name)
             action_class = AutoAction.from_env(env_name)
 
@@ -205,47 +206,19 @@ class GenericOpenEnvActor(ForgeActor):
                 docker_image = env_info.get("default_image", f"{env_name}-env:latest")
 
         except (ValueError, ImportError, AttributeError) as auto_error:
-            # AutoEnv discovery failed - try direct imports as fallback
-            # This handles cases where environments aren't yet registered with AutoEnv
-            logger.debug(
+            # AutoEnv discovery failed - fall back to GenericEnvClient
+            # GenericEnvClient works with ANY OpenEnv environment using dict-based actions
+            logger.info(
                 f"AutoEnv discovery failed for '{env_name}': {auto_error}. "
-                f"Falling back to direct import."
+                f"Falling back to GenericEnvClient (works with any OpenEnv environment)."
             )
 
-            # Normalize environment name (handle -env and _env suffixes)
-            env_key = env_name.replace("-env", "").replace("_env", "")
+            env_class = GenericEnvClient
+            action_class = GenericAction
 
-            # Try direct imports for known environments
-            if env_key in ["coding", "code"]:
-                try:
-                    from coding_env import CodeAction, CodingEnv
-
-                    env_class = CodingEnv
-                    action_class = CodeAction
-                    if docker_image is None:
-                        docker_image = "coding-env:latest"
-                except ImportError as e:
-                    logger.warning(f"Failed to import coding_env: {e}")
-
-            elif env_key in ["julia"]:
-                try:
-                    from julia_env import JuliaAction, JuliaEnv
-
-                    env_class = JuliaEnv
-                    action_class = JuliaAction
-                    if docker_image is None:
-                        docker_image = "julia-env:latest"
-                except ImportError as e:
-                    logger.warning(f"Failed to import julia_env: {e}")
-
-            # If fallback also failed, raise the original AutoEnv error
-            if env_class is None or action_class is None:
-                raise ValueError(
-                    f"Failed to load environment '{env_name}'. "
-                    f"AutoEnv discovery failed ({auto_error}), "
-                    f"and direct import fallback also failed. "
-                    f"Please ensure the environment is properly installed."
-                )
+            # Use default docker image naming convention if not specified
+            if docker_image is None:
+                docker_image = f"{env_name}-env:latest"
 
         # Return the kwargs dictionary
         return {

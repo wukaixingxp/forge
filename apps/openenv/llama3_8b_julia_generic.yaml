@@ -1,65 +1,61 @@
 # Grouped Relative Policy Optimization (GRPO) for Julia Code Generation
-# Using Generic OpenEnv Framework
-# >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
+# Using GenericEnvClient (no environment-specific packages required)
+# >>> python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
 
 # Global configuration
 group_size: 16
 batch_size: 1
 max_req_tokens: 1024
 max_res_tokens: 1024
-model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 1  # Increased from 1 to tolerate older episodes and prevent buffer warnings
+model: "/home/kaiwu/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
+off_by_n: 2  # Allow episodes from previous 2 policy versions to prevent buffer starvation
 
 # Main loop configuration
-rollout_threads: 1
-sample_timeout_s: 300  # Timeout for buffer sampling (allows time for slow episode generation)
-evaluation_timeout_s: 60.0  # Max time per code evaluation (prevents infinite loops from blocking training)
+rollout_threads: 4
+sample_timeout_s: 300
+evaluation_timeout_s: 60.0
 
-# Task-specific configuration
+# Task-specific configuration using GenericAction (no julia_env import needed)
 task:
-  env_name: "julia"  # Used to load JuliaEnv and JuliaAction via AutoEnv
-  build_action: !function apps.openenv.julia_utils.build_julia_action
-  evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
-  transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
+  env_name: "julia"
+  # Use the _generic version which uses GenericAction instead of JuliaAction
+  build_action: !function apps.openenv.julia_utils_generic.build_julia_action
+  evaluate_response: !function apps.openenv.julia_utils_generic.evaluate_julia_response
+  transform_sample: !function apps.openenv.julia_utils_generic.transform_julia_sample
 
 # Observability configuration
-metric_logging:
-  # wandb disabled - no network access
-  # wandb:
-  #   entity: "torchforge"
-  #   project: "kaiwu-general-grpo"
-  #   logging_mode: global_reduce
-  console:
-    logging_mode: global_reduce
-    log_per_rank: True
+# metric_logging:
+#   wandb:
+#     entity: "torchforge"
+#     project: "kaiwu-general-grpo"
+#     logging_mode: global_reduce
+#   console:
+#     logging_mode: global_reduce
+#     log_per_rank: True
 
 # Dataset configuration
 dataset:
   # TODO: Replace with your dataset path
-  # Example: path: "/path/to/your/julia_trainset.parquet"
-  # Or use HuggingFace dataset: path: "your-org/your-dataset"
   path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
   revision: "main"
   data_split: "train"
   streaming: false
   model: ${model}
 
-# OpenEnv configuration for GenericOpenEnvActor
+# OpenEnv configuration - only docker_image is required!
+# GenericEnvClient handles everything else automatically
 openenv_config:
-  docker_image: "julia-env:latest"
+  docker_image: "julia-env:latest"  # Just specify the image, no env_class needed
   container_timeout_s: 180.0
   container_memory_gb: 1024
   port: 8000
   num_worker: 16
   request_timeout_s: 60.0
-  # Environment-specific env vars (no more hardcoding in main.py)
-  env_vars:
-    JULIA_MAX_WORKERS: "16"
-    JULIA_EXECUTION_TIMEOUT: "60"
+  julia_max_workers: 16
 
 # Policy configuration
 policy:
-  prefetch_weights_to_shm: false  # Disable weight prefetching to avoid hanging
+  prefetch_weights_to_shm: false
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -75,9 +71,8 @@ policy:
     max_tokens: ${max_res_tokens}
     temperature: 1.0
     top_p: 1.0
-    # Hard limits to prevent infinite generation and gibberish outputs
-    min_tokens: 10  # Ensure some minimal output
-    truncate_prompt_tokens: null  # Don't truncate prompts
+    min_tokens: 10
+    truncate_prompt_tokens: null
     include_stop_str_in_output: false
 
 # Trainer configuration
@@ -85,10 +80,10 @@ trainer:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: hf://${model}
+    hf_assets_path: ${model}
   optimizer:
     name: AdamW
-    lr: 1e-5
+    lr: 5e-6
     eps: 1e-8
     weight_decay: 0.01
   lr_scheduler:
@@ -112,12 +107,12 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "1115checkpoint_llama3_8b_julia_openenv_off0"
-    initial_load_path: hf://${model}
+    folder: "checkpoint_llama3_8b_julia_generic"
+    initial_load_path: ${model}
     initial_load_in_hf: true
     last_save_in_hf: true
     interval: 150
-    async_mode: "async"  # Enable async checkpointing to prevent 3min blocking saves
+    async_mode: "async"
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
@@ -133,7 +128,7 @@ ref_model:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: hf://${model}
+    hf_assets_path: ${model}
   training:
     seq_len: ${trainer.training.seq_len}
     dtype: bfloat16
@@ -149,7 +144,7 @@ ref_model:
     expert_parallel_degree: 1
   checkpoint:
     enable: true
-    initial_load_path: hf://${model}
+    initial_load_path: ${model}
     initial_load_in_hf: true
 
 # All resource allocations
