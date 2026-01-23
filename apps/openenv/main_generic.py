@@ -597,71 +597,153 @@ async def main(cfg: DictConfig):
     # Core RL loops
     async def continuous_rollouts():
         rollout_count = 0
+        consecutive_errors = 0
+        max_consecutive_errors = int(os.environ.get("FORGE_MAX_ROLLOUT_ERRORS", "50"))
+        rollout_timeout_s = float(os.environ.get("FORGE_ROLLOUT_TIMEOUT_S", "300"))
+
         pad_id = await dataloader.pad_token.call_one()
         while not shutdown_event.is_set():
-            t = Tracer("main_perf/continuous_rollouts")
-            t.start()
-            sample = await dataloader.sample.call_one()
-            if sample is None:
-                print("Dataloader is empty, exiting continuous rollout")
-                return
+            try:
+                t = Tracer("main_perf/continuous_rollouts")
+                t.start()
 
-            t.step("data_loading")
+                # Timeout on data loading
+                try:
+                    sample = await asyncio.wait_for(
+                        dataloader.sample.call_one(),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[ROLLOUT] Timeout waiting for dataloader sample")
+                    record_metric("main/continuous_rollouts/dataloader_timeout", 1, Reduce.SUM)
+                    continue
 
-            prompt, target = sample["request"], sample["target"]
-            responses: list[Completion] = await policy.generate.route(prompt)
-            t.step("policy_generation")
+                if sample is None:
+                    print("Dataloader is empty, exiting continuous rollout")
+                    return
 
-            episodes = []
-            input_ids = torch.ones(
-                (group_size, max_req_tokens + max_res_tokens),
-                dtype=torch.long,
-            )
+                t.step("data_loading")
 
-            for i, response in enumerate(responses):
-                episode = Episode(
-                    episode_id=str(uuid.uuid4()),
-                    pad_id=pad_id,
-                    request_len=max_req_tokens,
-                    response_len=max_res_tokens,
-                    target=target,
-                    completion=response,
+                prompt, target = sample["request"], sample["target"]
+
+                # Timeout on policy generation
+                try:
+                    responses: list[Completion] = await asyncio.wait_for(
+                        policy.generate.route(prompt),
+                        timeout=rollout_timeout_s,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"[ROLLOUT] Timeout after {rollout_timeout_s}s waiting for policy.generate(). "
+                        f"Generator may be stuck during weight update."
+                    )
+                    record_metric("main/continuous_rollouts/generation_timeout", 1, Reduce.SUM)
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise RuntimeError(
+                            f"[ROLLOUT FAILURE] {consecutive_errors} consecutive rollout errors. "
+                            f"Generator appears to be unresponsive."
+                        )
+                    continue
+
+                t.step("policy_generation")
+
+                episodes = []
+                input_ids = torch.ones(
+                    (group_size, max_req_tokens + max_res_tokens),
+                    dtype=torch.long,
                 )
 
-                episode.reward = await reward_actor.evaluate_response.route(
-                    prompt=prompt, response=response.text, target=target
+                # Track evaluation errors for circuit breaker
+                eval_errors_this_batch = 0
+
+                for i, response in enumerate(responses):
+                    episode = Episode(
+                        episode_id=str(uuid.uuid4()),
+                        pad_id=pad_id,
+                        request_len=max_req_tokens,
+                        response_len=max_res_tokens,
+                        target=target,
+                        completion=response,
+                    )
+
+                    try:
+                        episode.reward = await reward_actor.evaluate_response.route(
+                            prompt=prompt, response=response.text, target=target
+                        )
+                    except Exception as e:
+                        logger.warning(f"[ROLLOUT] Reward evaluation failed: {e}")
+                        episode.reward = 0.0
+                        eval_errors_this_batch += 1
+                        record_metric("main/continuous_rollouts/eval_error", 1, Reduce.SUM)
+
+                    episodes.append(episode)
+                    input_ids[i, :max_req_tokens] = episode.request_tensor
+                    input_ids[i, max_req_tokens:] = episode.response_tensor
+
+                t.step("reward_evaluation")
+
+                # Circuit breaker: if ALL evaluations failed, something is wrong
+                if eval_errors_this_batch == len(responses):
+                    consecutive_errors += 1
+                    logger.warning(
+                        f"[CIRCUIT BREAKER] All {len(responses)} evaluations failed. "
+                        f"Consecutive error batches: {consecutive_errors}/{max_consecutive_errors}"
+                    )
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise RuntimeError(
+                            f"[ROLLOUT FAILURE] {consecutive_errors} consecutive batches with all evaluations failing. "
+                            f"Environment actor appears to be unresponsive. Check container health."
+                        )
+                else:
+                    # Reset error counter on partial success
+                    consecutive_errors = 0
+
+                # Timeout on reference model forward
+                try:
+                    ref_logprobs = await asyncio.wait_for(
+                        ref_model.forward.route(input_ids, max_req_tokens, return_logprobs=True),
+                        timeout=60.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error("[ROLLOUT] Timeout waiting for ref_model.forward()")
+                    record_metric("main/continuous_rollouts/ref_model_timeout", 1, Reduce.SUM)
+                    continue
+
+                t.step("reference_model_calculate_logprobs")
+
+                if not isinstance(ref_logprobs, torch.Tensor):
+                    raise TypeError(
+                        f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
+                    )
+
+                for i, episode in enumerate(episodes):
+                    episode.ref_logprobs = ref_logprobs[i]
+                del ref_logprobs, input_ids
+
+                advantages = await compute_advantages.compute.call_one(episodes)
+                for episode, advantage in zip(episodes, advantages):
+                    episode.advantage = advantage
+                    await replay_buffer.add.call_one(episode)
+
+                rollout_count += 1
+                record_metric(
+                    "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
                 )
+                t.stop()
 
-                episodes.append(episode)
-                input_ids[i, :max_req_tokens] = episode.request_tensor
-                input_ids[i, max_req_tokens:] = episode.response_tensor
-
-            t.step("reward_evaluation")
-
-            ref_logprobs = await ref_model.forward.route(
-                input_ids, max_req_tokens, return_logprobs=True
-            )
-            t.step("reference_model_calculate_logprobs")
-
-            if not isinstance(ref_logprobs, torch.Tensor):
-                raise TypeError(
-                    f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
-                )
-
-            for i, episode in enumerate(episodes):
-                episode.ref_logprobs = ref_logprobs[i]
-            del ref_logprobs, input_ids
-
-            advantages = await compute_advantages.compute.call_one(episodes)
-            for episode, advantage in zip(episodes, advantages):
-                episode.advantage = advantage
-                await replay_buffer.add.call_one(episode)
-
-            rollout_count += 1
-            record_metric(
-                "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
-            )
-            t.stop()
+            except Exception as e:
+                # Catch any unexpected errors in rollout loop to prevent thread crash
+                logger.error(f"[ROLLOUT] Unexpected error in rollout loop: {e}")
+                record_metric("main/continuous_rollouts/unexpected_error", 1, Reduce.SUM)
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    raise RuntimeError(
+                        f"[ROLLOUT FAILURE] {consecutive_errors} consecutive errors in rollout loop. "
+                        f"Last error: {e}"
+                    )
+                # Brief pause before retry
+                await asyncio.sleep(1.0)
 
     async def continuous_training():
         training_step = 0

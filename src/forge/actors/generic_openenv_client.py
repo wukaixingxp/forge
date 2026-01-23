@@ -29,11 +29,13 @@ Usage:
 import logging
 import socket
 import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from openenv import GenericEnvClient, GenericAction
-from openenv.core.client_types import StepResult
 from monarch.actor import endpoint
+
+if TYPE_CHECKING:
+    from openenv import GenericEnvClient, GenericAction
+    from openenv.core.client_types import StepResult
 
 from forge.controller import ForgeActor
 from forge.observability.metrics import record_metric, Reduce
@@ -130,11 +132,13 @@ class GenericOpenEnvClientActor(ForgeActor):
         self.port = port
         self.container_memory_gb = container_memory_gb
         self.enable_zombie_cleanup = enable_zombie_cleanup
-        self.client: Optional[GenericEnvClient] = None
+        self.client: Optional["GenericEnvClient"] = None
 
     @endpoint
     async def setup(self):
         """Initialize the OpenEnv environment and start the container."""
+        from openenv import GenericEnvClient
+
         logging.debug(
             f"Setting up GenericEnvClient actor with image {self.docker_image}"
         )
@@ -191,7 +195,7 @@ class GenericOpenEnvClientActor(ForgeActor):
         logging.debug("Environment reset.")
 
     @endpoint
-    async def execute(self, action: Dict[str, Any]) -> StepResult[Dict[str, Any]]:
+    async def execute(self, action: Dict[str, Any]) -> "StepResult[Dict[str, Any]]":
         """Executes an action inside the environment and returns the result.
 
         Args:
@@ -202,14 +206,14 @@ class GenericOpenEnvClientActor(ForgeActor):
             StepResult containing:
                 - observation: Dict with keys like exit_code, stdout, stderr,
                               tests_passed, tests_failed, code_compiles, etc.
-                - reward: Float reward value (if environment provides it)
-                - done: Boolean indicating if episode is complete
         """
+        from openenv import GenericEnvClient
+
         logging.debug(f"Executing action: {action}")
         if not self.client:
             raise RuntimeError("Client not initialized. Call setup() first.")
 
-        max_retries = 2
+        max_retries = 3
         for attempt in range(max_retries):
             try:
                 result = self.client.step(action)
@@ -217,6 +221,20 @@ class GenericOpenEnvClientActor(ForgeActor):
 
             except Exception as e:
                 error_msg = str(e).lower()
+
+                # Check for WebSocket connection errors (indicates container crash)
+                is_websocket_error = any(
+                    keyword in error_msg
+                    for keyword in [
+                        "connectionclosederror",
+                        "keepalive ping timeout",
+                        "websocket",
+                        "connection closed",
+                        "connection reset",
+                        "broken pipe",
+                    ]
+                )
+
                 is_container_error = any(
                     keyword in error_msg
                     for keyword in [
@@ -228,18 +246,25 @@ class GenericOpenEnvClientActor(ForgeActor):
                     ]
                 )
 
-                if is_container_error:
-                    record_metric("container/error_count", 1, Reduce.SUM)
+                if is_websocket_error or is_container_error:
+                    error_type = "WebSocket" if is_websocket_error else "Container"
+                    record_metric(f"container/{error_type.lower()}_error_count", 1, Reduce.SUM)
                     logging.error(
-                        f"Container error on attempt {attempt + 1}/{max_retries}: {e}"
+                        f"{error_type} error on attempt {attempt + 1}/{max_retries}: {e}"
                     )
 
                     if attempt < max_retries - 1:
-                        logging.info("Attempting to recreate environment...")
+                        logging.info(f"Attempting to reconnect/recreate environment (attempt {attempt + 2}/{max_retries})...")
                         try:
-                            self.client.close()
+                            # Close existing client if possible
+                            try:
+                                if self.client:
+                                    self.client.close()
+                            except Exception:
+                                pass  # Ignore close errors
+
                             import time
-                            time.sleep(3)
+                            time.sleep(2)  # Brief pause before reconnect
 
                             available_port = find_available_port(self.port)
                             self.client = GenericEnvClient.from_docker_image(
@@ -251,24 +276,47 @@ class GenericOpenEnvClientActor(ForgeActor):
                                 memory_gb=self.container_memory_gb,
                             )
                             self.client.reset()
-                            logging.info("Environment recreated successfully")
+                            logging.info("Environment reconnected successfully")
+                            record_metric("container/reconnect_success", 1, Reduce.SUM)
                             continue
                         except Exception as recreate_error:
                             logging.error(
-                                f"Failed to recreate environment: {recreate_error}"
+                                f"Failed to reconnect environment: {recreate_error}"
                             )
+                            record_metric("container/reconnect_failure", 1, Reduce.SUM)
                             if attempt == max_retries - 1:
                                 raise RuntimeError(
-                                    f"Container failed and could not be recreated: {e}"
+                                    f"Environment connection failed after {max_retries} attempts. "
+                                    f"Last error: {e}"
                                 ) from e
                     else:
                         raise RuntimeError(
-                            f"Container failed after {max_retries} attempts: {e}"
+                            f"Environment connection failed after {max_retries} attempts: {e}"
                         ) from e
                 else:
+                    # Non-connection error, don't retry
                     raise
 
         raise RuntimeError("Execution failed after all retry attempts")
+
+    @endpoint
+    async def health_check(self) -> Dict[str, Any]:
+        """Check if the environment is healthy and responsive.
+
+        Returns:
+            Dict with:
+                - healthy: True if environment is responsive
+                - error: Error message if unhealthy
+        """
+        if not self.client:
+            return {"healthy": False, "error": "Client not initialized"}
+
+        try:
+            # Try a simple operation to check connectivity
+            self.client.state()
+            return {"healthy": True, "error": None}
+        except Exception as e:
+            return {"healthy": False, "error": str(e)}
 
     @endpoint
     async def get_state(self) -> Dict[str, Any]:
@@ -286,7 +334,7 @@ class GenericOpenEnvClientActor(ForgeActor):
             self.client = None
             logging.debug("Cleanup complete.")
 
-    def create_action(self, **kwargs) -> GenericAction:
+    def create_action(self, **kwargs) -> "GenericAction":
         """Helper method to create a GenericAction.
 
         Args:
@@ -298,4 +346,6 @@ class GenericOpenEnvClientActor(ForgeActor):
         Example:
             action = actor.create_action(core_code="println(1)", test_code="@test true")
         """
+        from openenv import GenericAction
+
         return GenericAction(**kwargs)
