@@ -3,15 +3,22 @@
 # >>> python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
 
 # Global configuration
-group_size: 16
-batch_size: 1
+group_size: 8
+batch_size: 2
 max_req_tokens: 1024
 max_res_tokens: 1024
 model: "/home/kaiwu/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
-off_by_n: 2  # Allow episodes from previous 2 policy versions to prevent buffer starvation
+off_by_n: 1
+
+# GRPO/DAPO loss configuration - tuned for stability
+grpo:
+  beta: 0.01              # KL penalty coefficient (increased from 0.005)
+  clip_eps_low: 0.2       # Lower clipping bound
+  clip_eps_high: 0.28     # Upper clipping bound
+  max_kl_threshold: 0.5   # Warn if KL exceeds this value
 
 # Main loop configuration
-rollout_threads: 4
+rollout_threads: 2
 sample_timeout_s: 300
 evaluation_timeout_s: 60.0
 
@@ -23,15 +30,15 @@ task:
   evaluate_response: !function apps.openenv.julia_utils_generic.evaluate_julia_response
   transform_sample: !function apps.openenv.julia_utils_generic.transform_julia_sample
 
-# Observability configuration
-# metric_logging:
-#   wandb:
-#     entity: "torchforge"
-#     project: "kaiwu-general-grpo"
-#     logging_mode: global_reduce
-#   console:
-#     logging_mode: global_reduce
-#     log_per_rank: True
+#Observability configuration
+metric_logging:
+  wandb:
+    entity: "torchforge"
+    project: "kaiwu-openenv-grpo"
+    logging_mode: global_reduce
+  console:
+    logging_mode: global_reduce
+    log_per_rank: True
 
 # Dataset configuration
 dataset:
@@ -52,6 +59,8 @@ openenv_config:
   num_worker: 16
   request_timeout_s: 60.0
   julia_max_workers: 16
+  env_vars:
+    JULIAUP_OFFLINE: "1"  # Disable juliaup version checks (no internet on cluster)
 
 # Policy configuration
 policy:
@@ -83,11 +92,11 @@ trainer:
     hf_assets_path: ${model}
   optimizer:
     name: AdamW
-    lr: 5e-6
+    lr: 5e-6  # Reduced from 1e-5 for training stability
     eps: 1e-8
     weight_decay: 0.01
   lr_scheduler:
-    warmup_steps: 0
+    warmup_steps: 50
   training:
     local_batch_size: ${multiply:${batch_size},${group_size}}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
@@ -151,7 +160,7 @@ ref_model:
 services:
   policy:
     procs: ${policy.engine_args.tensor_parallel_size}
-    num_replicas: 1
+    num_replicas: 2
     mesh_name: policy
     with_gpus: true
   ref_model:

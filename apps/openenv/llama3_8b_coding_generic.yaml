@@ -1,34 +1,34 @@
-# Grouped Relative Policy Optimization (GRPO) for Julia Code Generation
-# Using Generic OpenEnv Framework
-# >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
+# Grouped Relative Policy Optimization (GRPO) for Python Code Generation
+# Using GenericEnvClient (no environment-specific packages required)
+# >>> python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_coding_generic.yaml
 
 # Global configuration
-group_size: 16
-batch_size: 1
+group_size: 8
+batch_size: 2
 max_req_tokens: 1024
-max_res_tokens: 1024
-model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
-off_by_n: 1  # Increased from 1 to tolerate older episodes and prevent buffer warnings
+max_res_tokens: 2048
+model: "/home/kaiwu/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
+off_by_n: 1  # Allow episodes from previous 2 policy versions to prevent buffer starvation
 
 # Main loop configuration
-rollout_threads: 1
-sample_timeout_s: 300  # Timeout for buffer sampling (allows time for slow episode generation)
-evaluation_timeout_s: 60.0  # Max time per code evaluation (prevents infinite loops from blocking training)
+rollout_threads: 2
+sample_timeout_s: 300
+evaluation_timeout_s: 60.0
 
-# Task-specific configuration
+# Task-specific configuration using GenericAction (no coding_env import needed)
 task:
-  env_name: "julia"  # Used to load JuliaEnv and JuliaAction via AutoEnv
-  build_action: !function apps.openenv.julia_utils.build_julia_action
-  evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
-  transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
+  env_name: "coding"
+  # Use the _generic version which uses GenericAction instead of CodeAction
+  build_action: !function apps.openenv.python_utils_generic.build_python_action
+  evaluate_response: !function apps.openenv.python_utils_generic.evaluate_python_response
+  transform_sample: !function apps.openenv.python_utils_generic.transform_python_sample
 
 # Observability configuration
 metric_logging:
-  # wandb disabled - no network access
-  # wandb:
-  #   entity: "torchforge"
-  #   project: "kaiwu-general-grpo"
-  #   logging_mode: global_reduce
+  wandb:
+    entity: "torchforge"
+    project: "kaiwu-openenv-grpo"
+    logging_mode: global_reduce
   console:
     logging_mode: global_reduce
     log_per_rank: True
@@ -36,30 +36,28 @@ metric_logging:
 # Dataset configuration
 dataset:
   # TODO: Replace with your dataset path
-  # Example: path: "/path/to/your/julia_trainset.parquet"
-  # Or use HuggingFace dataset: path: "your-org/your-dataset"
-  path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
+  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/scripts/data/acecode_89k/acecode_hard02.json"
   revision: "main"
   data_split: "train"
   streaming: false
   model: ${model}
 
-# OpenEnv configuration for GenericOpenEnvActor
+# OpenEnv configuration - only docker_image is required!
+# GenericEnvClient handles everything else automatically
 openenv_config:
-  docker_image: "julia-env:latest"
+  docker_image: "coding-env:latest"  # Just specify the image, no env_class needed
   container_timeout_s: 180.0
-  container_memory_gb: 1024
+  container_memory_gb: 128
   port: 8000
   num_worker: 16
   request_timeout_s: 60.0
-  # Environment-specific env vars (no more hardcoding in main.py)
+  # Environment-specific env vars
   env_vars:
-    JULIA_MAX_WORKERS: "16"
-    JULIA_EXECUTION_TIMEOUT: "60"
+    PYTHON_ADDITIONAL_IMPORTS: "sys,os,functools,typing,numpy,dataclasses,copy,heapq,enum,string,ast,json,struct,base64,csv,math,cmath,abc,contextlib,inspect,secrets,uuid,pathlib,io,threading,asyncio,concurrent.futures,urllib.parse,socket,random,itertools,collections,time,datetime,re,statistics"
 
 # Policy configuration
 policy:
-  prefetch_weights_to_shm: false  # Disable weight prefetching to avoid hanging
+  prefetch_weights_to_shm: false
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -75,9 +73,8 @@ policy:
     max_tokens: ${max_res_tokens}
     temperature: 1.0
     top_p: 1.0
-    # Hard limits to prevent infinite generation and gibberish outputs
-    min_tokens: 10  # Ensure some minimal output
-    truncate_prompt_tokens: null  # Don't truncate prompts
+    min_tokens: 10
+    truncate_prompt_tokens: null
     include_stop_str_in_output: false
 
 # Trainer configuration
@@ -85,14 +82,14 @@ trainer:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: hf://${model}
+    hf_assets_path: ${model}
   optimizer:
     name: AdamW
     lr: 1e-5
     eps: 1e-8
     weight_decay: 0.01
   lr_scheduler:
-    warmup_steps: 0
+    warmup_steps: 50
   training:
     local_batch_size: ${multiply:${batch_size},${group_size}}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
@@ -112,12 +109,12 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "1115checkpoint_llama3_8b_julia_openenv_off0"
-    initial_load_path: hf://${model}
+    folder: "checkpoint_llama3_8b_coding_generic"
+    initial_load_path: ${model}
     initial_load_in_hf: true
     last_save_in_hf: true
     interval: 150
-    async_mode: "async"  # Enable async checkpointing to prevent 3min blocking saves
+    async_mode: "async"
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
@@ -133,7 +130,7 @@ ref_model:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: hf://${model}
+    hf_assets_path: ${model}
   training:
     seq_len: ${trainer.training.seq_len}
     dtype: bfloat16
@@ -149,14 +146,14 @@ ref_model:
     expert_parallel_degree: 1
   checkpoint:
     enable: true
-    initial_load_path: hf://${model}
+    initial_load_path: ${model}
     initial_load_in_hf: true
 
 # All resource allocations
 services:
   policy:
     procs: ${policy.engine_args.tensor_parallel_size}
-    num_replicas: 1
+    num_replicas: 2
     mesh_name: policy
     with_gpus: true
   ref_model:
@@ -187,7 +184,7 @@ actors:
     procs: 1
     with_gpus: false
     mesh_name: compute_advantages
-  julia_env:
+  coding_env:
     procs: 1
     with_gpus: false
-    mesh_name: julia_env
+    mesh_name: coding_env
