@@ -452,9 +452,28 @@ class Generator(ForgeActor):
                     wait_start = time.perf_counter()
 
                 # Wait until all pending requests have been processed
-                # TODO: If generating long sequences, this might be long and will block
-                # generator weight updates
-                await self.request_lock.wait_for(lambda: len(self.requests) == 0)
+                # Use timeout to prevent deadlock if requests are stuck
+                # Default timeout is 60 seconds, which should be sufficient for most sequences
+                weight_update_timeout = float(
+                    os.environ.get("FORGE_WEIGHT_UPDATE_TIMEOUT_S", "60")
+                )
+                try:
+                    await asyncio.wait_for(
+                        self.request_lock.wait_for(lambda: len(self.requests) == 0),
+                        timeout=weight_update_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    pending_count = len(self.requests)
+                    logger.warning(
+                        f"[WEIGHT UPDATE] Timeout after {weight_update_timeout}s waiting for "
+                        f"{pending_count} pending requests to complete. "
+                        f"Proceeding with weight update to prevent deadlock."
+                    )
+                    record_metric(
+                        "generator_perf/update_weights/timeout_count",
+                        1,
+                        Reduce.SUM,
+                    )
 
                 if curr_requests:
                     wait_duration = time.perf_counter() - wait_start

@@ -240,3 +240,38 @@ class ReplayBuffer(ForgeActor):
     async def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self.buffer = state_dict["buffer"]
         random.setstate(state_dict["rng_state"])
+
+    @endpoint
+    async def health_check(self, curr_policy_version: int) -> dict[str, Any]:
+        """Check buffer health without modifying state.
+
+        Returns a dict with:
+            - size: current buffer size
+            - required: episodes needed for one batch
+            - healthy: True if buffer has enough fresh episodes
+            - versions: set of policy versions in buffer
+            - freshness_ratio: ratio of on-policy episodes to total
+
+        This is useful for implementing backpressure - training can check
+        buffer health before triggering weight updates that block rollouts.
+        """
+        required = self.dp_size * self.batch_size
+
+        # Count episodes that would survive eviction
+        surviving_count = 0
+        versions_in_buffer = []
+        for entry in self.buffer:
+            age = curr_policy_version - entry.data.policy_version
+            if self.max_policy_age is None or age <= self.max_policy_age:
+                if self.max_resample_count is None or entry.sample_count <= self.max_resample_count:
+                    surviving_count += 1
+                    versions_in_buffer.append(entry.data.policy_version)
+
+        return {
+            "size": len(self.buffer),
+            "surviving_after_eviction": surviving_count,
+            "required": required,
+            "healthy": surviving_count >= required * 2,  # 2x margin for safety
+            "versions": set(versions_in_buffer) if versions_in_buffer else set(),
+            "freshness_ratio": surviving_count / len(self.buffer) if self.buffer else 0.0,
+        }

@@ -13,6 +13,8 @@ OpenEnv environment without requiring environment-specific packages.
 Usage: python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
 """
 
+from __future__ import annotations
+
 import asyncio
 import importlib
 import logging
@@ -22,7 +24,13 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, TYPE_CHECKING
+
+# Type-only imports to avoid runtime import of openenv (which pulls in fastmcp/docket
+# and conflicts with monarch's OpenTelemetry meter provider)
+if TYPE_CHECKING:
+    from openenv import GenericAction
+    from openenv.core.client_types import StepResult
 
 # CRITICAL: Add openenv directory to sys.path at module level
 _appdir = Path(__file__).parent
@@ -34,7 +42,6 @@ import torch.nn.functional as F
 import torchstore as ts
 import yaml
 from datasets import load_dataset
-from forge.util.checkpoint import drop_weights
 from forge.actors.generator import Generator
 from forge.actors.generic_openenv_client import GenericOpenEnvClientActor
 from forge.actors.reference_model import ReferenceModel
@@ -47,13 +54,12 @@ from forge.observability.metric_actors import get_or_create_metric_logger
 from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
 from forge.types import LauncherConfig, ProvisionerConfig
+from forge.util.checkpoint import drop_weights
 from forge.util.config import parse
 from forge.util.ops import compute_logprobs
 from monarch.actor import endpoint
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from vllm.transformers_utils.tokenizer import get_tokenizer
-from openenv import GenericAction
-from openenv.core.client_types import StepResult
 
 
 # Set up module logger
@@ -170,41 +176,91 @@ def collate(
     return inputs, targets
 
 
-def dapo_loss(
-    logits: torch.Tensor,
-    response: torch.Tensor,
-    ref_logprobs: torch.Tensor,
-    advantages: torch.Tensor,
-    padding_mask: torch.Tensor,
-    beta: float = 0.005,
+def make_dapo_loss(
+    beta: float = 0.01,
     clip_eps_low: float = 0.2,
     clip_eps_high: float = 0.28,
-) -> torch.Tensor:
-    """DAPO (Direct Alignment Policy Optimization) loss function."""
-    action_log_probs = compute_logprobs(logits, response)
+    max_kl_threshold: float = 0.5,
+):
+    """Factory function to create DAPO loss with configurable parameters.
 
-    if beta != 0.0:
-        log_ratio = ref_logprobs - action_log_probs
-        log_ratio = log_ratio * padding_mask
-        k3 = log_ratio.exp() - 1 - log_ratio
+    Args:
+        beta: KL penalty coefficient (default 0.02, increased from 0.005 for stability)
+        clip_eps_low: Lower clipping bound for policy ratio
+        clip_eps_high: Upper clipping bound for policy ratio
+        max_kl_threshold: If KL exceeds this, log a warning (early stopping signal)
+    """
 
-    old_action_log_probs = action_log_probs.detach()
+    def dapo_loss(
+        logits: torch.Tensor,
+        response: torch.Tensor,
+        ref_logprobs: torch.Tensor,
+        advantages: torch.Tensor,
+        padding_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """DAPO (Direct Alignment Policy Optimization) loss function."""
+        action_log_probs = compute_logprobs(logits, response)
 
-    coef_1 = torch.exp(action_log_probs - old_action_log_probs)
-    coef_2 = torch.clamp(coef_1, 1 - clip_eps_low, 1 + clip_eps_high)
+        # Compute KL divergence for monitoring and regularization
+        # KL(policy || ref) approximation: mean(log_policy - log_ref)
+        log_ratio = action_log_probs - ref_logprobs
+        log_ratio_masked = log_ratio * padding_mask
+        kl_div = (
+            log_ratio_masked.sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)
+        ).mean()
 
-    per_token_loss1 = coef_1 * advantages
-    per_token_loss2 = coef_2 * advantages
+        # Log KL divergence for monitoring
+        record_metric("rl_trainer/kl_divergence", kl_div.item(), Reduce.MEAN)
 
-    per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
-    per_token_loss = per_token_loss * padding_mask
+        # Warn if KL is too high (potential training collapse)
+        kl_div_val = kl_div.abs().item()
+        if kl_div_val > max_kl_threshold:
+            logger.warning(
+                f"KL divergence ({kl_div_val}) exceeds threshold ({max_kl_threshold}). "
+                "Consider stopping training or increasing beta."
+            )
+            record_metric("rl_trainer/kl_threshold_exceeded", 1, Reduce.SUM)
 
-    if beta != 0.0:
-        per_token_loss = per_token_loss + beta * k3
+        # KL penalty term (k3 approximation for stability)
+        # Note: using ref_logprobs - action_log_probs for the penalty direction
+        if beta != 0.0:
+            kl_for_penalty = (ref_logprobs - action_log_probs) * padding_mask
+            k3 = kl_for_penalty.exp() - 1 - kl_for_penalty
 
-    loss = (per_token_loss.sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)).mean()
+        old_action_log_probs = action_log_probs.detach()
 
-    return loss
+        coef_1 = torch.exp(action_log_probs - old_action_log_probs)
+        coef_2 = torch.clamp(coef_1, 1 - clip_eps_low, 1 + clip_eps_high)
+
+        per_token_loss1 = coef_1 * advantages
+        per_token_loss2 = coef_2 * advantages
+
+        per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+        per_token_loss = per_token_loss * padding_mask
+
+        if beta != 0.0:
+            per_token_loss = per_token_loss + beta * k3
+            # Log the KL penalty contribution
+            kl_penalty = (
+                (beta * k3).sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)
+            ).mean()
+            record_metric("rl_trainer/kl_penalty", kl_penalty.item(), Reduce.MEAN)
+
+        loss = (
+            per_token_loss.sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)
+        ).mean()
+
+        # Safety check: warn if loss is negative (sign of training collapse)
+        loss_val = loss.item()
+        if loss_val < 0:
+            logger.warning(
+                f"Negative loss detected ({loss_val}). Training may be unstable."
+            )
+            record_metric("rl_trainer/negative_loss_count", 1, Reduce.SUM)
+
+        return loss
+
+    return dapo_loss
 
 
 @dataclass
@@ -248,7 +304,9 @@ class GenericRewardActor(ForgeActor):
 
             # Execute in environment with timeout protection
             result = await asyncio.wait_for(
-                self.env_actor.execute.call_one(dict(action)),  # Convert to dict for serialization
+                self.env_actor.execute.call_one(
+                    dict(action)
+                ),  # Convert to dict for serialization
                 timeout=self.evaluation_timeout_s,
             )
 
@@ -338,6 +396,7 @@ class GenericDatasetActor(ForgeActor):
             raise ValueError(f"Dataset is empty after loading from {self.path}.")
 
         if self.transform_sample_fn:
+
             def transform_wrapper(sample):
                 return self.transform_sample_fn(sample, self._tokenizer)
 
@@ -456,11 +515,15 @@ async def main(cfg: DictConfig):
     env_name = task_config.get("env_name", "generic")
     if env_name == "julia":
         if "JULIA_MAX_WORKERS" not in env_vars:
-            env_vars["JULIA_MAX_WORKERS"] = str(openenv_config.get("julia_max_workers", 16))
+            env_vars["JULIA_MAX_WORKERS"] = str(
+                openenv_config.get("julia_max_workers", 16)
+            )
         if "JULIA_EXECUTION_TIMEOUT" not in env_vars:
             env_vars["JULIA_EXECUTION_TIMEOUT"] = str(int(request_timeout_s))
 
-    logger.debug(f"main Initializing GenericOpenEnvClientActor with image={docker_image}...")
+    logger.debug(
+        f"main Initializing GenericOpenEnvClientActor with image={docker_image}..."
+    )
 
     # Deploy GenericOpenEnvClientActor as Monarch actor
     env_actor = await GenericOpenEnvClientActor.options(
@@ -494,7 +557,13 @@ async def main(cfg: DictConfig):
         ),
         Policy.options(**cfg.services.policy).as_service(**cfg.policy),
         RLTrainer.options(**cfg.actors.trainer).as_actor(
-            **cfg.trainer, loss=dapo_loss
+            **cfg.trainer,
+            loss=make_dapo_loss(
+                beta=cfg.get("grpo", {}).get("beta", 0.02),
+                clip_eps_low=cfg.get("grpo", {}).get("clip_eps_low", 0.2),
+                clip_eps_high=cfg.get("grpo", {}).get("clip_eps_high", 0.28),
+                max_kl_threshold=cfg.get("grpo", {}).get("max_kl_threshold", 0.5),
+            ),
         ),
         ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
             **cfg.replay_buffer, collate=collate
@@ -518,7 +587,7 @@ async def main(cfg: DictConfig):
     # Initialize torchstore
     trainer_num_procs = cfg.actors.trainer["procs"]
     trainer_host_mesh_name = cfg.actors.trainer["mesh_name"]
-    trainer_hosts = provisioner.get_host_mesh(trainer_host_mesh_name)
+    trainer_hosts = await provisioner.get_host_mesh(trainer_host_mesh_name)
     await ts.initialize(
         mesh=trainer_hosts.spawn_procs(per_host={"procs": trainer_num_procs}),
         strategy=ts.LocalRankStrategy(),
@@ -597,6 +666,11 @@ async def main(cfg: DictConfig):
     async def continuous_training():
         training_step = 0
         restart_tracer = True
+        consecutive_empty_samples = 0
+        # Configurable via environment variable for advanced tuning
+        max_empty_samples_before_error = int(
+            os.environ.get("FORGE_MAX_EMPTY_BUFFER_WAIT_S", "60")
+        ) * 10  # Convert seconds to 0.1s intervals
 
         while max_steps == -1 or training_step < max_steps:
             if restart_tracer:
@@ -608,9 +682,46 @@ async def main(cfg: DictConfig):
                 curr_policy_version=training_step
             )
             if batch is None:
+                consecutive_empty_samples += 1
+
+                # Log warning at increasing intervals
+                if consecutive_empty_samples == 10:  # 1 second
+                    logger.warning(
+                        f"[BUFFER STARVATION] Buffer empty for 1s at step {training_step}. "
+                        f"Rollouts may be blocked during weight update."
+                    )
+                elif consecutive_empty_samples == 100:  # 10 seconds
+                    logger.warning(
+                        f"[BUFFER STARVATION] Buffer empty for 10s at step {training_step}. "
+                        f"Consider increasing max_policy_age or rollout_threads."
+                    )
+                elif consecutive_empty_samples == 300:  # 30 seconds
+                    logger.error(
+                        f"[BUFFER STARVATION] Buffer empty for 30s at step {training_step}. "
+                        f"This indicates a likely deadlock. Check generator weight updates."
+                    )
+
+                # Fail after max wait to prevent infinite hangs
+                if consecutive_empty_samples >= max_empty_samples_before_error:
+                    raise RuntimeError(
+                        f"[BUFFER STARVATION DEADLOCK] Replay buffer has been empty for "
+                        f"{consecutive_empty_samples * 0.1:.1f} seconds at training step {training_step}. "
+                        f"This typically indicates that:\n"
+                        f"  1. All policy replicas are blocked during weight updates\n"
+                        f"  2. max_policy_age ({cfg.get('off_by_n', 1)}) is too aggressive\n"
+                        f"  3. rollout_threads ({num_rollout_threads}) is insufficient\n"
+                        f"Solutions:\n"
+                        f"  - Increase 'off_by_n' in config (recommended: 2-3)\n"
+                        f"  - Increase 'rollout_threads' in config\n"
+                        f"  - Increase policy service 'num_replicas'\n"
+                        f"  - Set FORGE_MAX_EMPTY_BUFFER_WAIT_S env var to increase timeout"
+                    )
+
                 logger.debug("Running out of batch, now waiting")
                 await asyncio.sleep(0.1)
             else:
+                # Reset starvation counter on successful sample
+                consecutive_empty_samples = 0
                 t.step("waiting_for_buffer")
 
                 inputs, targets = batch
@@ -620,6 +731,34 @@ async def main(cfg: DictConfig):
 
                 await trainer.push_weights.call(training_step)
                 t.step("push_weights")
+
+                # Backpressure: Check buffer health before triggering weight update.
+                # Weight updates block all rollouts, so we need enough buffer headroom
+                # to survive the blocking period without starving.
+                buffer_health = await replay_buffer.health_check.call_one(
+                    curr_policy_version=training_step
+                )
+                if not buffer_health["healthy"]:
+                    logger.warning(
+                        f"[BACKPRESSURE] Buffer low before weight update "
+                        f"(surviving={buffer_health['surviving_after_eviction']}, "
+                        f"required={buffer_health['required']}). "
+                        f"Waiting for more episodes to prevent starvation."
+                    )
+                    # Wait up to 10 seconds for buffer to recover
+                    for _ in range(100):
+                        await asyncio.sleep(0.1)
+                        buffer_health = await replay_buffer.health_check.call_one(
+                            curr_policy_version=training_step
+                        )
+                        if buffer_health["healthy"]:
+                            break
+                    else:
+                        logger.warning(
+                            f"[BACKPRESSURE] Buffer still low after 10s wait. "
+                            f"Proceeding with weight update anyway."
+                        )
+                t.step("backpressure_check")
 
                 await policy.update_weights.fanout(training_step)
                 t.step("update_weights")
@@ -650,6 +789,7 @@ async def main(cfg: DictConfig):
         print("Training interrupted by user")
     except Exception as e:
         import traceback
+
         print(f"Training failed with error: {e}")
         traceback.print_exc()
         raise
