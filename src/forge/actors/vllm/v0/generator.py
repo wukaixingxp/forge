@@ -706,14 +706,43 @@ class GeneratorWorker(ForgeActor):
         loaded_weights = set()
         logger.info("[GeneratorWorker] Updating weights from torchstore.")
         hf_param_names = [extract_param_name(key) for key in matching_keys]
-        # We can't pass a generator since vllm load_weights is not async.
-        # Instead, we just call load_weights with one parameter at a time.
-        for name in hf_param_names:
-            param_key = get_param_key(version, name)
-            param = await ts.get(param_key)
-            loaded = model.load_weights([(name, param)])
-            del param
-            loaded_weights.update(loaded)
+
+        # Check if GPU Direct RDMA is enabled
+        import os
+        gpu_direct_enabled = os.environ.get("TORCHSTORE_GPU_DIRECT_RDMA", "1") == "1"
+        use_gpu_direct = gpu_direct_enabled and torch.cuda.is_available()
+
+        if use_gpu_direct:
+            logger.info(
+                f"[GeneratorWorker] GPU Direct RDMA enabled - fetching {len(hf_param_names)} "
+                "parameters directly to GPU memory"
+            )
+
+        # Chunked parallel fetching: fetch in batches to balance parallelism with memory
+        # Too many parallel fetches causes memory pressure; too few loses parallelism benefit
+        # Batch size of 16 = ~1GB per batch for 8B model (16 * 64MB avg param size)
+        BATCH_SIZE = 16
+        param_keys = [get_param_key(version, name) for name in hf_param_names]
+        logger.info(
+            f"[GeneratorWorker] Fetching {len(param_keys)} parameters in batches of {BATCH_SIZE}..."
+        )
+
+        for batch_start in range(0, len(hf_param_names), BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, len(hf_param_names))
+            batch_names = hf_param_names[batch_start:batch_end]
+            batch_keys = param_keys[batch_start:batch_end]
+
+            # Fetch batch in parallel
+            # With GPU Direct RDMA enabled, torchstore will allocate directly on GPU
+            batch_params = await asyncio.gather(*[ts.get(key) for key in batch_keys])
+
+            # Load batch to model and free memory immediately
+            for name, param in zip(batch_names, batch_params):
+                # If param is on GPU (from GPU Direct RDMA), it's already ready
+                # If on CPU, load_weights will handle the transfer
+                loaded = model.load_weights([(name, param)])
+                del param
+                loaded_weights.update(loaded)
 
     @endpoint
     async def save_model_params(self):
@@ -747,13 +776,23 @@ class _WeightFetcher(ForgeActor):
         param_names: list[str],
     ) -> dict[str, SharedTensorHandle]:
         """Fetch weights from torchstore and load them into shared memory."""
+        # Chunked parallel fetching to balance parallelism with memory pressure
+        BATCH_SIZE = 16
         sd = {}
-        for name in param_names:
-            param_key = get_param_key(version, name)
-            param = await ts.get(param_key)
-            # Use context manager to ensure cleanup after getting handle
-            with SharedTensor(tensor=param) as shared_tensor:
-                handle = shared_tensor.get_handle()
-                sd[name] = handle
-            del param  # Explicitly free the tensor after copying to shared memory
+
+        for batch_start in range(0, len(param_names), BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, len(param_names))
+            batch_names = param_names[batch_start:batch_end]
+            batch_keys = [get_param_key(version, name) for name in batch_names]
+
+            # Fetch batch in parallel
+            batch_params = await asyncio.gather(*[ts.get(key) for key in batch_keys])
+
+            # Create shared tensors and free memory immediately
+            for name, param in zip(batch_names, batch_params):
+                with SharedTensor(tensor=param) as shared_tensor:
+                    handle = shared_tensor.get_handle()
+                    sd[name] = handle
+                del param
+
         return sd

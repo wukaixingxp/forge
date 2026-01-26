@@ -15,10 +15,17 @@ Usage: python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia
 
 from __future__ import annotations
 
+# CRITICAL: Set CUDA allocator config BEFORE any PyTorch imports
+# This enables expandable segments which:
+# 1. Reduces GPU memory fragmentation
+# 2. Enables GPU Direct RDMA for faster weight updates (~4s vs ~10s)
+# 3. Prevents OOM errors when storage volume uses GPU memory
+import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import asyncio
 import importlib
 import logging
-import os
 import sys
 import time
 import uuid
@@ -43,7 +50,7 @@ import torchstore as ts
 import yaml
 from datasets import load_dataset
 from forge.actors.generator import Generator
-from forge.actors.generic_openenv_client import GenericOpenEnvClientActor
+from forge.actors.generic_openenv_client import GenericOpenEnvClientActor, find_available_port
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import RLTrainer
@@ -265,12 +272,31 @@ def make_dapo_loss(
 
 @dataclass
 class GenericRewardActor(ForgeActor):
-    """Generic reward actor that uses GenericEnvClient and GenericAction."""
+    """Generic reward actor that uses GenericEnvClient and GenericAction.
 
-    env_actor: GenericOpenEnvClientActor
+    Supports multiple env_actors for parallel evaluation across different
+    WebSocket connections. Includes circuit breaker pattern to detect and
+    restart unhealthy containers.
+    """
+
+    env_actors: list  # List of GenericOpenEnvClientActor instances
     build_action_fn: Callable[[str, Dict[str, Any]], GenericAction]
     evaluate_response_fn: Callable[[StepResult, str, Dict[str, Any]], float]
     evaluation_timeout_s: float = 60.0
+
+    # Circuit breaker configuration
+    circuit_breaker_threshold: int = 10  # Timeouts before marking unhealthy
+    circuit_breaker_window_s: float = 60.0  # Time window for counting timeouts
+    circuit_breaker_cooldown_s: float = 30.0  # Cooldown before retrying unhealthy actor
+
+    _request_counter: int = 0  # For round-robin distribution
+
+    # Circuit breaker state (initialized in setup)
+    _actor_timeout_counts: list = None  # Timeout count per actor
+    _actor_timeout_timestamps: list = None  # Recent timeout timestamps per actor
+    _actor_healthy: list = None  # Health status per actor
+    _actor_cooldown_until: list = None  # Cooldown end time per actor
+    _restart_in_progress: list = None  # Restart lock per actor
 
     @endpoint
     async def setup(self):
@@ -279,15 +305,141 @@ class GenericRewardActor(ForgeActor):
         openenv_dir = Path(__file__).parent
         if str(openenv_dir) not in sys.path:
             sys.path.insert(0, str(openenv_dir))
+
+        # Initialize circuit breaker state
+        num_actors = len(self.env_actors)
+        self._actor_timeout_counts = [0] * num_actors
+        self._actor_timeout_timestamps = [[] for _ in range(num_actors)]
+        self._actor_healthy = [True] * num_actors
+        self._actor_cooldown_until = [0.0] * num_actors
+        self._restart_in_progress = [False] * num_actors
+
         logger.debug(
             f"GenericRewardActor.setup Timeout set to {self.evaluation_timeout_s}s"
         )
+        logger.debug(f"GenericRewardActor.setup Using {num_actors} env_actors for parallel evaluation")
+        logger.debug(f"GenericRewardActor.setup Circuit breaker: threshold={self.circuit_breaker_threshold}, window={self.circuit_breaker_window_s}s")
         logger.debug("GenericRewardActor.setup Setup complete!")
+
+    def _get_healthy_actor_idx(self) -> int:
+        """Get the next healthy actor index using round-robin with health awareness.
+
+        Returns:
+            Index of a healthy actor, or the least-bad unhealthy actor if all are unhealthy
+        """
+        num_actors = len(self.env_actors)
+        current_time = time.time()
+
+        # Try to find a healthy actor using round-robin
+        for _ in range(num_actors):
+            idx = self._request_counter % num_actors
+            self._request_counter += 1
+
+            if self._actor_healthy[idx]:
+                return idx
+
+            # Check if cooldown has expired for unhealthy actor
+            if current_time >= self._actor_cooldown_until[idx]:
+                # Cooldown expired, give it another chance
+                logger.info(f"Circuit breaker: Actor {idx} cooldown expired, retrying")
+                self._actor_healthy[idx] = True
+                self._actor_timeout_counts[idx] = 0
+                self._actor_timeout_timestamps[idx] = []
+                return idx
+
+        # All actors are unhealthy and in cooldown - use the one with earliest cooldown end
+        earliest_idx = min(range(num_actors), key=lambda i: self._actor_cooldown_until[i])
+        logger.warning(f"Circuit breaker: All actors unhealthy, using actor {earliest_idx}")
+        return earliest_idx
+
+    def _record_timeout(self, actor_idx: int):
+        """Record a timeout for an actor and check if circuit should trip."""
+        current_time = time.time()
+
+        # Add timestamp to recent timeouts
+        self._actor_timeout_timestamps[actor_idx].append(current_time)
+
+        # Remove old timestamps outside the window
+        window_start = current_time - self.circuit_breaker_window_s
+        self._actor_timeout_timestamps[actor_idx] = [
+            ts for ts in self._actor_timeout_timestamps[actor_idx]
+            if ts >= window_start
+        ]
+
+        # Count recent timeouts
+        recent_timeouts = len(self._actor_timeout_timestamps[actor_idx])
+        self._actor_timeout_counts[actor_idx] = recent_timeouts
+
+        record_metric(f"circuit_breaker/actor_{actor_idx}/timeout_count", recent_timeouts, Reduce.MAX)
+
+        # Check if circuit should trip
+        if recent_timeouts >= self.circuit_breaker_threshold and self._actor_healthy[actor_idx]:
+            logger.error(
+                f"Circuit breaker TRIPPED for actor {actor_idx}: "
+                f"{recent_timeouts} timeouts in {self.circuit_breaker_window_s}s"
+            )
+            self._actor_healthy[actor_idx] = False
+            self._actor_cooldown_until[actor_idx] = current_time + self.circuit_breaker_cooldown_s
+            record_metric(f"circuit_breaker/actor_{actor_idx}/tripped", 1, Reduce.SUM)
+
+            # Trigger async restart
+            asyncio.create_task(self._restart_actor(actor_idx))
+
+    def _record_success(self, actor_idx: int):
+        """Record a successful execution for an actor."""
+        # Successful execution reduces timeout pressure
+        # We don't clear all timeouts, but the window will naturally expire them
+
+    async def _restart_actor(self, actor_idx: int):
+        """Restart an unhealthy actor's container pool."""
+        if self._restart_in_progress[actor_idx]:
+            logger.debug(f"Restart already in progress for actor {actor_idx}")
+            return
+
+        self._restart_in_progress[actor_idx] = True
+        record_metric(f"circuit_breaker/actor_{actor_idx}/restart_attempt", 1, Reduce.SUM)
+
+        try:
+            logger.warning(f"Circuit breaker: Initiating FULL POOL restart for actor {actor_idx}")
+
+            env_actor = self.env_actors[actor_idx]
+            result = await env_actor.restart_container.call_one()
+
+            if result.get("success"):
+                logger.info(
+                    f"Circuit breaker: Actor {actor_idx} pool restarted successfully - "
+                    f"{result.get('num_containers')} containers, {result.get('num_connections')} connections"
+                )
+                self._actor_healthy[actor_idx] = True
+                self._actor_timeout_counts[actor_idx] = 0
+                self._actor_timeout_timestamps[actor_idx] = []
+                self._actor_cooldown_until[actor_idx] = 0.0
+                record_metric(f"circuit_breaker/actor_{actor_idx}/restart_success", 1, Reduce.SUM)
+            else:
+                logger.error(
+                    f"Circuit breaker: Actor {actor_idx} restart failed: {result.get('error')}"
+                )
+                # Extend cooldown on failure
+                self._actor_cooldown_until[actor_idx] = time.time() + self.circuit_breaker_cooldown_s * 2
+                record_metric(f"circuit_breaker/actor_{actor_idx}/restart_failure", 1, Reduce.SUM)
+
+        except Exception as e:
+            logger.error(f"Circuit breaker: Exception during restart of actor {actor_idx}: {e}")
+            import traceback
+            traceback.print_exc()
+            self._actor_cooldown_until[actor_idx] = time.time() + self.circuit_breaker_cooldown_s * 2
+            record_metric(f"circuit_breaker/actor_{actor_idx}/restart_failure", 1, Reduce.SUM)
+
+        finally:
+            self._restart_in_progress[actor_idx] = False
 
     @endpoint
     async def evaluate_response(self, prompt: str, response: str, target: Any) -> float:
         """
         Evaluate response using task-specific functions with timeout protection.
+
+        Uses health-aware round-robin distribution across env_actors with
+        circuit breaker pattern to detect and restart unhealthy containers.
 
         Args:
             prompt: The problem description
@@ -302,13 +454,20 @@ class GenericRewardActor(ForgeActor):
             sample = {"target": target}
             action = self.build_action_fn(response, sample)
 
+            # Get healthy actor using circuit breaker logic
+            env_actor_idx = self._get_healthy_actor_idx()
+            env_actor = self.env_actors[env_actor_idx]
+
             # Execute in environment with timeout protection
             result = await asyncio.wait_for(
-                self.env_actor.execute.call_one(
+                env_actor.execute.call_one(
                     dict(action)
                 ),  # Convert to dict for serialization
                 timeout=self.evaluation_timeout_s,
             )
+
+            # Record success
+            self._record_success(env_actor_idx)
 
             # Evaluate result using task-specific function
             reward = self.evaluate_response_fn(result, response, sample)
@@ -321,15 +480,39 @@ class GenericRewardActor(ForgeActor):
 
         except asyncio.TimeoutError:
             logger.warning(
-                f"Evaluation timeout after {self.evaluation_timeout_s}s - likely infinite loop in generated code"
+                f"Evaluation timeout after {self.evaluation_timeout_s}s on actor {env_actor_idx} "
+                f"- likely infinite loop in generated code"
             )
+            # Record timeout for circuit breaker
+            self._record_timeout(env_actor_idx)
             record_metric("reward/evaluate_response/timeout_count", 1, Reduce.SUM)
             return 0.0
 
         except Exception as e:
-            logger.error(f"Evaluation error: {e}")
+            logger.error(f"Evaluation error on actor {env_actor_idx}: {e}")
+            # Connection errors also count towards circuit breaker
+            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+                self._record_timeout(env_actor_idx)
             record_metric("reward/evaluate_response/error_count", 1, Reduce.SUM)
             return 0.0
+
+    @endpoint
+    async def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of all env_actors for monitoring."""
+        return {
+            "actors": [
+                {
+                    "index": i,
+                    "healthy": self._actor_healthy[i],
+                    "timeout_count": self._actor_timeout_counts[i],
+                    "cooldown_remaining": max(0, self._actor_cooldown_until[i] - time.time()),
+                    "restart_in_progress": self._restart_in_progress[i],
+                }
+                for i in range(len(self.env_actors))
+            ],
+            "healthy_count": sum(self._actor_healthy),
+            "total_count": len(self.env_actors),
+        }
 
 
 @dataclass
@@ -525,17 +708,50 @@ async def main(cfg: DictConfig):
         f"main Initializing GenericOpenEnvClientActor with image={docker_image}..."
     )
 
-    # Deploy GenericOpenEnvClientActor as Monarch actor
-    env_actor = await GenericOpenEnvClientActor.options(
-        **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
-    ).as_actor(
-        docker_image=docker_image,
-        env_vars=env_vars,
-        container_timeout_s=container_timeout_s,
-        request_timeout_s=request_timeout_s,
-        container_memory_gb=container_memory_gb,
+    # Smart container allocation: Create one actor per concurrent evaluation needed
+    # Each actor manages its own container(s) with connection pooling
+
+    num_env_actors = openenv_config.get("num_env_actors", cfg.get("group_size", 8))
+    num_containers_per_actor = openenv_config.get("num_containers", 1)
+    num_connections_per_container = openenv_config.get("num_connections", 1)
+
+    logger.info(
+        f"Creating {num_env_actors} env_actors, each with {num_containers_per_actor} containers "
+        f"and {num_connections_per_container} connections per container"
     )
-    logger.debug("main GenericOpenEnvClientActor initialized successfully")
+
+    # Create env_actors
+    env_actors = []
+    base_port = openenv_config.get("port", 8000)
+
+    for i in range(num_env_actors):
+        actor_env_vars = env_vars.copy()
+        # Each actor starts from a different port range to avoid conflicts
+        actor_port = base_port - (i * num_containers_per_actor * 2)
+
+        logger.debug(
+            f"Creating env_actor {i+1}/{num_env_actors} starting at port {actor_port}"
+        )
+
+        env_actor = await GenericOpenEnvClientActor.options(
+            **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
+        ).as_actor(
+            docker_image=docker_image,
+            env_vars=actor_env_vars,
+            container_timeout_s=container_timeout_s,
+            request_timeout_s=request_timeout_s,
+            container_memory_gb=container_memory_gb,
+            port=actor_port,
+            num_containers=num_containers_per_actor,
+            num_connections=num_connections_per_container,
+        )
+        env_actors.append(env_actor)
+
+    total_containers = num_env_actors * num_containers_per_actor
+    logger.info(
+        f"All {num_env_actors} env_actors initialized successfully "
+        f"({total_containers} total containers)"
+    )
 
     # Create all other actors
     (
@@ -571,10 +787,14 @@ async def main(cfg: DictConfig):
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
         ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
         GenericRewardActor.options(**cfg.services.reward_actor).as_service(
-            env_actor=env_actor,
+            env_actors=env_actors,
             build_action_fn=build_action_fn,
             evaluate_response_fn=evaluate_response_fn,
             evaluation_timeout_s=cfg.get("evaluation_timeout_s", 60.0),
+            # Circuit breaker configuration
+            circuit_breaker_threshold=cfg.get("circuit_breaker", {}).get("threshold", 10),
+            circuit_breaker_window_s=cfg.get("circuit_breaker", {}).get("window_s", 60.0),
+            circuit_breaker_cooldown_s=cfg.get("circuit_breaker", {}).get("cooldown_s", 30.0),
         ),
     )
     logger.debug("main asyncio.gather completed successfully!")
@@ -657,6 +877,7 @@ async def main(cfg: DictConfig):
                 # Track evaluation errors for circuit breaker
                 eval_errors_this_batch = 0
 
+                # Create episodes first
                 for i, response in enumerate(responses):
                     episode = Episode(
                         episode_id=str(uuid.uuid4()),
@@ -666,18 +887,34 @@ async def main(cfg: DictConfig):
                         target=target,
                         completion=response,
                     )
+                    episodes.append(episode)
 
+                # Parallel reward evaluation using asyncio.gather
+                async def evaluate_single(idx, episode, response):
                     try:
-                        episode.reward = await reward_actor.evaluate_response.route(
+                        reward = await reward_actor.evaluate_response.route(
                             prompt=prompt, response=response.text, target=target
                         )
+                        return idx, reward, None
                     except Exception as e:
-                        logger.warning(f"[ROLLOUT] Reward evaluation failed: {e}")
-                        episode.reward = 0.0
+                        return idx, 0.0, e
+
+                eval_tasks = [
+                    evaluate_single(i, ep, resp)
+                    for i, (ep, resp) in enumerate(zip(episodes, responses))
+                ]
+                eval_results = await asyncio.gather(*eval_tasks)
+
+                # Process results
+                for idx, reward, error in eval_results:
+                    episodes[idx].reward = reward
+                    if error is not None:
+                        logger.warning(f"[ROLLOUT] Reward evaluation failed: {error}")
                         eval_errors_this_batch += 1
                         record_metric("main/continuous_rollouts/eval_error", 1, Reduce.SUM)
 
-                    episodes.append(episode)
+                # Build input_ids after rewards are assigned
+                for i, episode in enumerate(episodes):
                     input_ids[i, :max_req_tokens] = episode.request_tensor
                     input_ids[i, max_req_tokens:] = episode.response_tensor
 
@@ -751,7 +988,7 @@ async def main(cfg: DictConfig):
         consecutive_empty_samples = 0
         # Configurable via environment variable for advanced tuning
         max_empty_samples_before_error = int(
-            os.environ.get("FORGE_MAX_EMPTY_BUFFER_WAIT_S", "60")
+            os.environ.get("FORGE_MAX_EMPTY_BUFFER_WAIT_S", "120")
         ) * 10  # Convert seconds to 0.1s intervals
 
         while max_steps == -1 or training_step < max_steps:
@@ -814,35 +1051,61 @@ async def main(cfg: DictConfig):
                 await trainer.push_weights.call(training_step)
                 t.step("push_weights")
 
-                # Backpressure: Check buffer health before triggering weight update.
+                # Backpressure: Check buffer health for NEXT policy version.
                 # Weight updates block all rollouts, so we need enough buffer headroom
                 # to survive the blocking period without starving.
+                # CRITICAL: Check training_step + 1 because after weight update,
+                # episodes from current version will be evicted!
                 buffer_health = await replay_buffer.health_check.call_one(
-                    curr_policy_version=training_step
+                    curr_policy_version=training_step + 1  # Check NEXT version survivability
                 )
-                if not buffer_health["healthy"]:
+                required_surviving = buffer_health["required"] * 2  # Need 2x batch for safety margin
+                surviving = buffer_health["surviving_after_eviction"]
+
+                if surviving < required_surviving:
+                    backpressure_start = time.time()
+                    max_backpressure_wait = float(os.environ.get("FORGE_BACKPRESSURE_TIMEOUT_S", "30"))
                     logger.warning(
-                        f"[BACKPRESSURE] Buffer low before weight update "
-                        f"(surviving={buffer_health['surviving_after_eviction']}, "
-                        f"required={buffer_health['required']}). "
-                        f"Waiting for more episodes to prevent starvation."
+                        f"[BACKPRESSURE] Buffer low before weight update at step {training_step}. "
+                        f"surviving={surviving}, required={required_surviving}. "
+                        f"Waiting up to {max_backpressure_wait}s for more episodes."
                     )
-                    # Wait up to 10 seconds for buffer to recover
-                    for _ in range(100):
-                        await asyncio.sleep(0.1)
+                    record_metric("backpressure/triggered", 1, Reduce.SUM)
+
+                    # Wait with exponential backoff
+                    wait_interval = 0.5
+                    while (time.time() - backpressure_start) < max_backpressure_wait:
+                        await asyncio.sleep(wait_interval)
+                        wait_interval = min(wait_interval * 1.5, 5.0)  # Cap at 5s intervals
+
                         buffer_health = await replay_buffer.health_check.call_one(
-                            curr_policy_version=training_step
+                            curr_policy_version=training_step + 1
                         )
-                        if buffer_health["healthy"]:
+                        if buffer_health["surviving_after_eviction"] >= required_surviving:
+                            wait_duration = time.time() - backpressure_start
+                            logger.info(f"[BACKPRESSURE] Buffer recovered after {wait_duration:.1f}s")
+                            record_metric("backpressure/wait_duration_s", wait_duration, Reduce.MEAN)
                             break
                     else:
+                        wait_duration = time.time() - backpressure_start
                         logger.warning(
-                            f"[BACKPRESSURE] Buffer still low after 10s wait. "
-                            f"Proceeding with weight update anyway."
+                            f"[BACKPRESSURE] Buffer still low after {wait_duration:.1f}s. "
+                            f"Proceeding with weight update to prevent complete stall."
                         )
+                        record_metric("backpressure/timeout", 1, Reduce.SUM)
                 t.step("backpressure_check")
 
+                # Track weight update duration for monitoring
+                weight_update_start = time.time()
                 await policy.update_weights.fanout(training_step)
+                weight_update_duration = time.time() - weight_update_start
+                record_metric("training/weight_update_duration_s", weight_update_duration, Reduce.MEAN)
+                if weight_update_duration > 20.0:
+                    logger.warning(
+                        f"[SLOW WEIGHT UPDATE] Step {training_step} took {weight_update_duration:.1f}s. "
+                        f"Consider increasing off_by_n or policy replicas."
+                    )
+                    record_metric("training/slow_weight_update_count", 1, Reduce.SUM)
                 t.step("update_weights")
 
                 if training_step >= 2:
@@ -854,15 +1117,48 @@ async def main(cfg: DictConfig):
 
                 await mlogger.flush.call_one(training_step)
 
+                # Periodic health monitoring every 10 steps
+                if training_step % 10 == 0:
+                    health_buffer = await replay_buffer.health_check.call_one(
+                        curr_policy_version=training_step
+                    )
+                    record_metric("health/buffer_size", health_buffer["size"], Reduce.MAX)
+                    record_metric("health/buffer_surviving", health_buffer["surviving_after_eviction"], Reduce.MAX)
+                    record_metric("health/buffer_freshness_ratio", health_buffer["freshness_ratio"], Reduce.MEAN)
+                    record_metric("health/buffer_required", health_buffer["required"], Reduce.MAX)
+
+                    # Log reward actor health
+                    try:
+                        reward_health = await reward_actor.get_health_status.route()
+                        record_metric("health/env_actors_healthy", reward_health["healthy_count"], Reduce.MAX)
+                        record_metric("health/env_actors_total", reward_health["total_count"], Reduce.MAX)
+                    except Exception as health_err:
+                        logger.debug(f"Could not get reward actor health: {health_err}")
+
+                    # Log training progress
+                    record_metric("training/step", training_step, Reduce.MAX)
+                    progress_pct = 100.0 * training_step / max_steps if max_steps > 0 else 0
+                    record_metric("training/progress_pct", progress_pct, Reduce.MAX)
+
+                    logger.info(
+                        f"[HEALTH] Step {training_step}/{max_steps} ({progress_pct:.1f}%) | "
+                        f"Buffer: {health_buffer['size']} ({health_buffer['surviving_after_eviction']} surviving) | "
+                        f"Freshness: {health_buffer['freshness_ratio']:.2f}"
+                    )
+
         print(
             f"Reached training limit ({max_steps} steps). Exiting continuous_training loop."
         )
 
     num_rollout_threads = cfg.get("rollout_threads", 1)
     print(f"Starting OpenEnv GRPO with {num_rollout_threads} rollout threads")
+
+    # Start rollout tasks first
     rollout_tasks = [
         asyncio.create_task(continuous_rollouts()) for _ in range(num_rollout_threads)
     ]
+
+    # Start training immediately (no warmup)
     training_task = asyncio.create_task(continuous_training())
 
     try:
@@ -891,12 +1187,13 @@ async def main(cfg: DictConfig):
 
         training_task.cancel()
 
-        print("Cleaning up environment Docker container...")
-        try:
-            await env_actor.teardown.call_one()
-            print("Environment Docker container stopped successfully")
-        except Exception as teardown_error:
-            print(f"Warning: Error during environment teardown: {teardown_error}")
+        print(f"Cleaning up {len(env_actors)} environment Docker containers...")
+        for i, env_actor in enumerate(env_actors):
+            try:
+                await env_actor.teardown.call_one()
+                print(f"Environment Docker container {i+1}/{len(env_actors)} stopped successfully")
+            except Exception as teardown_error:
+                print(f"Warning: Error during environment teardown {i+1}: {teardown_error}")
 
         await shutdown()
 

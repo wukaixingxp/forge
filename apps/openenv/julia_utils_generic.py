@@ -248,10 +248,20 @@ def evaluate_julia_response(result, response: str, sample: Dict[str, Any]) -> fl
             record_metric("reward/julia/no_code_extracted", 1, Reduce.SUM)
             return 0.0
 
+        # Get test code from sample for logging
+        test_code = sample.get("target", "")
+
+        # Log both code and test_code together for extraction
         print("EXTRACTED JULIA CODE:")
         print("-" * 80)
         print(code)
         print("-" * 80)
+        print("TEST CODE:")
+        print("-" * 80)
+        print(test_code)
+        print("-" * 80)
+        print("END OF SAMPLE")
+        print("=" * 80)
 
         # Validate for common Python-like syntax errors
         is_valid, validation_warnings = validate_julia_syntax(code)

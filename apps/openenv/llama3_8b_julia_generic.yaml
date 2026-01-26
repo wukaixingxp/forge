@@ -18,9 +18,17 @@ grpo:
   max_kl_threshold: 0.5   # Warn if KL exceeds this value
 
 # Main loop configuration
-rollout_threads: 2
-sample_timeout_s: 300
-evaluation_timeout_s: 60.0
+rollout_threads: ${group_size}  # Increased from 16 for higher episode production rate
+sample_timeout_s: 15
+# IMPORTANT: evaluation_timeout_s must be > JULIA_EXECUTION_TIMEOUT to allow Julia
+# to kill stuck workers and recover. Julia timeout = 15s, so we wait 20s.
+evaluation_timeout_s: 20.0
+
+# Circuit breaker configuration - triggers container restart on repeated failures
+circuit_breaker:
+  threshold: 5            # Number of timeouts before tripping
+  window_s: 60.0          # Time window for counting timeouts
+  cooldown_s: 60.0        # Wait time for container restart to complete
 
 # Task-specific configuration using GenericAction (no julia_env import needed)
 task:
@@ -56,11 +64,16 @@ openenv_config:
   container_timeout_s: 180.0
   container_memory_gb: 1024
   port: 8000
-  num_worker: 16
-  request_timeout_s: 60.0
-  julia_max_workers: 16
+  num_env_actors: 2              # Multiple actors for circuit breaker isolation
+  num_containers: 2              # 1 container per actor (2 total)
+  num_connections: 12            # Connections per container (24 total across 2 actors)
+  # request_timeout_s should be > JULIA_EXECUTION_TIMEOUT to allow recovery
+  request_timeout_s: 20.0
+  julia_max_workers: 32  # Maximum number of workers to use for parallelization
   env_vars:
     JULIAUP_OFFLINE: "1"  # Disable juliaup version checks (no internet on cluster)
+    JULIA_EXECUTION_TIMEOUT: "15"  # Julia-side timeout (must be < request_timeout_s)
+    JULIA_MAX_WORKERS: "16"  # Number of concurrent Julia worker processes
 
 # Policy configuration
 policy:
@@ -160,7 +173,7 @@ ref_model:
 services:
   policy:
     procs: ${policy.engine_args.tensor_parallel_size}
-    num_replicas: 2
+    num_replicas: 1
     mesh_name: policy
     with_gpus: true
   ref_model:
