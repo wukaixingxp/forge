@@ -145,42 +145,80 @@ class ReferenceModel(ForgeActor):
 
         t = Tracer("reference_perf/forward", timer="gpu", track_memory=True)
         t.start()
-        self.engine.gc_handler.run(self.step)
 
-        model_parts = self.engine.model_parts
-        parallel_dims = self.engine.parallel_dims
-        input_ids = input_ids.to("cuda")
+        try:
+            self.engine.gc_handler.run(self.step)
 
-        # optional_context_parallel_ctx = (
-        #     dist_utils.create_context_parallel_ctx(
-        #         cp_mesh=parallel_dims.world_mesh["cp"],
-        #         cp_buffers=[inputs, labels] + [m.freqs_cis for m in model_parts],
-        #         cp_seq_dims=[1, 1] + [0 for _ in model_parts],
-        #         cp_no_restore_buffers={inputs, labels},
-        #         cp_rotate_method=self.job_config.parallelism.context_parallel_rotate_method,
-        #     )
-        #     if parallel_dims.cp_enabled
-        #     else None
-        # )
-        optional_context_parallel_ctx = None
-        if self.engine.parallel_dims.pp_enabled:
-            raise NotImplementedError("PP not implemented yet")
-        else:
-            # (jackkhuu) Not sure if either context are needed for inference here
-            with self.engine.train_context(optional_context_parallel_ctx):
-                with self.engine.maybe_enable_amp:
-                    with torch.inference_mode():
-                        logits = self.model(input_ids)
+            model_parts = self.engine.model_parts
+            parallel_dims = self.engine.parallel_dims
+            input_ids = input_ids.to("cuda")
 
-                        if return_logprobs:
-                            target_ids = create_shifted_targets(input_ids)
-                            logprobs, _ = self.compute_logprobs(logits, target_ids)
+            # optional_context_parallel_ctx = (
+            #     dist_utils.create_context_parallel_ctx(
+            #         cp_mesh=parallel_dims.world_mesh["cp"],
+            #         cp_buffers=[inputs, labels] + [m.freqs_cis for m in model_parts],
+            #         cp_seq_dims=[1, 1] + [0 for _ in model_parts],
+            #         cp_no_restore_buffers={inputs, labels},
+            #         cp_rotate_method=self.job_config.parallelism.context_parallel_rotate_method,
+            #     )
+            #     if parallel_dims.cp_enabled
+            #     else None
+            # )
+            optional_context_parallel_ctx = None
+            if self.engine.parallel_dims.pp_enabled:
+                raise NotImplementedError("PP not implemented yet")
+            else:
+                # (jackkhuu) Not sure if either context are needed for inference here
+                with self.engine.train_context(optional_context_parallel_ctx):
+                    with self.engine.maybe_enable_amp:
+                        with torch.inference_mode():
+                            logits = self.model(input_ids)
 
-        out = logprobs if return_logprobs else logits
+                            if return_logprobs:
+                                target_ids = create_shifted_targets(input_ids)
+                                logprobs, _ = self.compute_logprobs(logits, target_ids)
 
-        if isinstance(out, DTensor):
-            out = out.full_tensor()
+            out = logprobs if return_logprobs else logits
 
-        self.step += 1
-        t.stop()
-        return out
+            if isinstance(out, DTensor):
+                out = out.full_tensor()
+
+            self.step += 1
+            t.stop()
+            return out
+
+        except torch.cuda.OutOfMemoryError as e:
+            logger.error(
+                f"[ReferenceModel] CUDA OOM error during forward pass: {e}. "
+                f"Input shape: {input_ids.shape}, Step: {self.step}"
+            )
+            record_metric("reference_perf/forward/cuda_oom_errors", 1, Reduce.SUM)
+            # Try to free memory before re-raising
+            torch.cuda.empty_cache()
+            raise
+
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            if "cuda" in error_msg or "device" in error_msg:
+                logger.error(
+                    f"[ReferenceModel] CUDA runtime error during forward pass: {e}. "
+                    f"Input shape: {input_ids.shape}, Step: {self.step}"
+                )
+                record_metric("reference_perf/forward/cuda_runtime_errors", 1, Reduce.SUM)
+            else:
+                logger.error(
+                    f"[ReferenceModel] Runtime error during forward pass: {e}. "
+                    f"Input shape: {input_ids.shape}, Step: {self.step}"
+                )
+                record_metric("reference_perf/forward/runtime_errors", 1, Reduce.SUM)
+            raise
+
+        except Exception as e:
+            logger.error(
+                f"[ReferenceModel] Unexpected error during forward pass: {type(e).__name__}: {e}. "
+                f"Input shape: {input_ids.shape if input_ids is not None else 'N/A'}, Step: {self.step}"
+            )
+            record_metric("reference_perf/forward/unexpected_errors", 1, Reduce.SUM)
+            import traceback
+            logger.error(f"[ReferenceModel] Traceback:\n{traceback.format_exc()}")
+            raise

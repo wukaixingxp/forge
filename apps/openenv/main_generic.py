@@ -61,7 +61,7 @@ from forge.observability.metric_actors import get_or_create_metric_logger
 from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
 from forge.rl.loss import GRPOLoss, DAPOLoss
-from forge.types import LauncherConfig, ProvisionerConfig
+from forge.types import LauncherConfig, ProvisionerConfig, TrainBatch
 from forge.util.checkpoint import drop_weights
 from forge.util.config import parse
 from monarch.actor import endpoint
@@ -104,7 +104,9 @@ class Episode:
     @property
     def request_tensor(self) -> torch.Tensor:
         tensor: torch.Tensor = self.completion.prompt_ids.to(torch.long)
-        if tensor.shape[0] < self.request_len:
+        if tensor.shape[0] > self.request_len:  # truncate from left (keep end)
+            tensor = tensor[-self.request_len :]
+        elif tensor.shape[0] < self.request_len:  # left pad
             diff = self.request_len - tensor.shape[0]
             tensor = F.pad(tensor, (diff, 0), value=self.pad_id)
         return tensor
@@ -112,7 +114,9 @@ class Episode:
     @property
     def response_tensor(self) -> torch.Tensor:
         tensor: torch.Tensor = self.completion.token_ids.to(torch.long)
-        if tensor.shape[0] < self.response_len:
+        if tensor.shape[0] > self.response_len:  # truncate from right (keep beginning)
+            tensor = tensor[: self.response_len]
+        elif tensor.shape[0] < self.response_len:  # right pad
             diff = self.response_len - tensor.shape[0]
             tensor = F.pad(tensor, (0, diff), value=self.pad_id)
         return tensor
@@ -144,13 +148,12 @@ yaml.add_constructor("!function", function_constructor, Loader=yaml.SafeLoader)
 
 def collate(
     batches: list[Group],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Collates a list of batches into a single batch of inputs and targets.
+) -> list[TrainBatch]:
+    """Collates a list of batches into TrainBatch objects.
 
     Supports both GRPOLoss (requires generator_logprobs, loss_mask) and DAPOLoss.
     """
-    inputs = []
-    targets = []
+    result = []
     for batch_idx, batch in enumerate(batches):
         logger.debug(f"collate Processing batch {batch_idx}, len={len(batch)}")
 
@@ -160,49 +163,37 @@ def collate(
         response = [e.response_tensor for e in batch]
         response = torch.stack(response)
 
-        ref_logprobs = [e.ref_logprobs for e in batch]
-        ref_logprobs = torch.stack(ref_logprobs)
+        input_ids = torch.cat([request, response], dim=1)
+        seq_len = input_ids.shape[1]
 
-        if ref_logprobs.dim() > 2:
-            ref_logprobs = ref_logprobs.squeeze(0)
+        # ref_logprobs is optional - only stack if all episodes have it
+        ref_logprobs = None
+        if all(e.ref_logprobs is not None for e in batch):
+            ref_logprobs = torch.stack([e.ref_logprobs for e in batch])
 
         advantages = [e.advantage for e in batch]
-        advantages = torch.tensor(advantages).unsqueeze(-1)
+        advantages = torch.tensor(advantages).unsqueeze(-1)  # [b x 1]
+        advantages = advantages.expand(-1, seq_len)  # [b x s]
 
-        pad_id = batch[0].pad_id
-        mask = torch.ne(response, pad_id)
+        generator_logprobs = torch.stack([e.generator_logprobs for e in batch])
+        loss_mask = torch.stack([e.loss_mask for e in batch])
 
-        if not isinstance(mask, torch.Tensor):
-            mask = torch.tensor(mask, dtype=torch.bool)
-
-        if mask.dim() == 0:
-            mask = mask.unsqueeze(0).unsqueeze(0)
-        elif mask.dim() == 1:
-            mask = mask.unsqueeze(0)
-
-        input = {"tokens": torch.cat([request, response], dim=1)}
-        target = {
-            "response": response,
-            "ref_logprobs": ref_logprobs,
+        loss_inputs = {
+            "generator_logprobs": generator_logprobs,
+            "loss_mask": loss_mask,
             "advantages": advantages,
-            "padding_mask": mask,
         }
+        # Include ref_logprobs for GRPOLoss (uses it for KL penalty when beta > 0)
+        if ref_logprobs is not None:
+            loss_inputs["ref_logprobs"] = ref_logprobs
 
-        # Add generator_logprobs and loss_mask for GRPOLoss if available
-        if batch[0].generator_logprobs is not None:
-            generator_logprobs = [e.generator_logprobs for e in batch]
-            generator_logprobs = torch.stack(generator_logprobs)
-            target["generator_logprobs"] = generator_logprobs
-
-        if batch[0].loss_mask is not None:
-            loss_mask = [e.loss_mask for e in batch]
-            loss_mask = torch.stack(loss_mask)
-            target["loss_mask"] = loss_mask
-
-        inputs.append(input)
-        targets.append(target)
-
-    return inputs, targets
+        result.append(
+            TrainBatch(
+                model_inputs={"tokens": input_ids},
+                loss_inputs=loss_inputs,
+            )
+        )
+    return result
 
 
 def make_loss(cfg: DictConfig):
@@ -1011,7 +1002,7 @@ async def main(cfg: DictConfig):
                 # Timeout on reference model forward
                 try:
                     ref_logprobs = await asyncio.wait_for(
-                        ref_model.forward.route(input_ids, max_req_tokens, return_logprobs=True),
+                        ref_model.forward.route(input_ids, return_logprobs=True),
                         timeout=60.0,
                     )
                 except asyncio.TimeoutError:
@@ -1127,8 +1118,7 @@ async def main(cfg: DictConfig):
                 consecutive_empty_samples = 0
                 t.step("waiting_for_buffer")
 
-                inputs, targets = batch
-                await trainer.train_step.call(inputs, targets)
+                await trainer.train_step.call(batch)
                 training_step += 1
                 t.step("train_step")
 

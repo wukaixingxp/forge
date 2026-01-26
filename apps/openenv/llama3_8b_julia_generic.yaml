@@ -9,14 +9,15 @@ max_req_tokens: 1024
 max_res_tokens: 1024
 model: "/home/kaiwu/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
 off_by_n: 1
+compile: true # Enable torch.compile for trainer/ref_model, and CUDA graphs for vLLM
 
 # GRPO/DAPO loss configuration - tuned for stability
 grpo:
-  loss_type: dapo             # Options: "grpo" or "dapo" (default: dapo)
+  loss_type: grpo             # Options: "grpo" or "dapo" (default: dapo)
   # Common parameters
   clip_eps_low: 0.2           # Lower clipping bound (alias: clip_low)
   clip_eps_high: 0.28         # Upper clipping bound (alias: clip_high)
-  agg_type: token_mean        # Aggregation: "token_mean" (DAPO) or "fixed_horizon" (GRPO)
+  agg_type: fixed_horizon     # Aggregation: "fixed_horizon" (GRPO) or "token_mean" (DAPO)
   # GRPO-specific parameters
   beta: 0.1                   # KL penalty coefficient (only used when loss_type: grpo)
   # DAPO-specific parameters
@@ -29,7 +30,7 @@ episode_dropout:
   variance_threshold: 0.001       # std threshold for variance dropout
 
 # Main loop configuration
-rollout_threads: ${group_size}  # Increased from 16 for higher episode production rate
+rollout_threads: 1
 sample_timeout_s: 15
 # IMPORTANT: evaluation_timeout_s must be > JULIA_EXECUTION_TIMEOUT to allow Julia
 # to kill stuck workers and recover. Julia timeout = 15s, so we wait 20s.
@@ -88,7 +89,7 @@ openenv_config:
 
 # Policy configuration
 policy:
-  prefetch_weights_to_shm: false
+  prefetch_weights_to_shm: true
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -130,7 +131,7 @@ trainer:
     dtype: bfloat16
     gc_freq: 1
   compile:
-    enable: false
+    enable: ${compile}
   parallelism:
     data_parallel_replicate_degree: 1
     data_parallel_shard_degree: 1

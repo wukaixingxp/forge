@@ -172,18 +172,16 @@ class ReplayBuffer(ForgeActor):
                 f"versions_in_buffer: {set(policy_versions_in_buffer) if policy_versions_in_buffer else 'EMPTY'}"
             )
 
-            # Warn if buffer is empty or critically low
+            # Log buffer status at debug level (starvation warnings are in main loop)
             if len(self.buffer) == 0:
-                logger.warning(
-                    f"[BUFFER WARNING] Buffer is EMPTY after eviction! "
-                    f"curr_policy_version={curr_policy_version}, max_policy_age={self.max_policy_age}. "
-                    f"This may cause training to hang if no new episodes arrive."
+                logger.debug(
+                    f"[BUFFER] Buffer empty after eviction. "
+                    f"curr_policy_version={curr_policy_version}, max_policy_age={self.max_policy_age}"
                 )
             elif len(self.buffer) < self.batch_size * self.dp_size:
-                logger.warning(
-                    f"[BUFFER WARNING] Buffer has only {len(self.buffer)} episodes, "
-                    f"but need {self.batch_size * self.dp_size} for sampling. "
-                    f"Training may stall until more episodes arrive."
+                logger.debug(
+                    f"[BUFFER] Buffer low: {len(self.buffer)} episodes, "
+                    f"need {self.batch_size * self.dp_size} for sampling."
                 )
 
     def _collect(self, indices: list[int]):
