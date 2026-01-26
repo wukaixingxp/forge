@@ -12,10 +12,21 @@ off_by_n: 1
 
 # GRPO/DAPO loss configuration - tuned for stability
 grpo:
-  beta: 0.01              # KL penalty coefficient (increased from 0.005)
-  clip_eps_low: 0.2       # Lower clipping bound
-  clip_eps_high: 0.28     # Upper clipping bound
-  max_kl_threshold: 0.5   # Warn if KL exceeds this value
+  loss_type: dapo             # Options: "grpo" or "dapo" (default: dapo)
+  # Common parameters
+  clip_eps_low: 0.2           # Lower clipping bound (alias: clip_low)
+  clip_eps_high: 0.28         # Upper clipping bound (alias: clip_high)
+  agg_type: token_mean        # Aggregation: "token_mean" (DAPO) or "fixed_horizon" (GRPO)
+  # GRPO-specific parameters
+  beta: 0.1                   # KL penalty coefficient (only used when loss_type: grpo)
+  # DAPO-specific parameters
+  dual_clip_c: 3.0            # Dual-clip constant (only used when loss_type: dapo)
+
+# Episode dropout configuration (aligned with GRPO reference)
+episode_dropout:
+  enable_variance_dropout: true   # Drop batches with low reward variance
+  enable_truncation_dropout: true # Drop batches with truncated responses
+  variance_threshold: 0.001       # std threshold for variance dropout
 
 # Main loop configuration
 rollout_threads: ${group_size}  # Increased from 16 for higher episode production rate
@@ -94,6 +105,7 @@ policy:
     temperature: 1.0
     top_p: 1.0
     min_tokens: 10
+    logprobs: 1               # Required for both GRPOLoss and DAPOLoss
     truncate_prompt_tokens: null
     include_stop_str_in_output: false
 

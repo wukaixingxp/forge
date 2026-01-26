@@ -53,17 +53,17 @@ from forge.actors.generator import Generator
 from forge.actors.generic_openenv_client import GenericOpenEnvClientActor, find_available_port
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
-from forge.actors.trainer import RLTrainer
+from forge.actors.trainer import TitanTrainer
 from forge.controller.actor import ForgeActor
 from forge.controller.provisioner import init_provisioner, shutdown
 from forge.data_models.completion import Completion
 from forge.observability.metric_actors import get_or_create_metric_logger
 from forge.observability.metrics import record_metric, Reduce
 from forge.observability.perf_tracker import Tracer
+from forge.rl.loss import GRPOLoss, DAPOLoss
 from forge.types import LauncherConfig, ProvisionerConfig
 from forge.util.checkpoint import drop_weights
 from forge.util.config import parse
-from forge.util.ops import compute_logprobs
 from monarch.actor import endpoint
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from vllm.transformers_utils.tokenizer import get_tokenizer
@@ -87,12 +87,19 @@ class Episode:
     target: Any | None = None
     completion: Completion | None = None
     ref_logprobs: torch.Tensor | None = None
+    generator_logprobs: torch.Tensor | None = None  # For GRPOLoss
+    loss_mask: torch.Tensor | None = None  # For GRPOLoss
     reward: float | None = None
     advantage: float | None = None
 
     @property
     def policy_version(self) -> int | None:
         return self.completion.generator_version if self.completion else None
+
+    @property
+    def stop_reason(self) -> str | None:
+        """Get stop reason from completion for truncation detection."""
+        return self.completion.stop_reason if self.completion else None
 
     @property
     def request_tensor(self) -> torch.Tensor:
@@ -138,7 +145,10 @@ yaml.add_constructor("!function", function_constructor, Loader=yaml.SafeLoader)
 def collate(
     batches: list[Group],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Collates a list of batches into a single batch of inputs and targets."""
+    """Collates a list of batches into a single batch of inputs and targets.
+
+    Supports both GRPOLoss (requires generator_logprobs, loss_mask) and DAPOLoss.
+    """
     inputs = []
     targets = []
     for batch_idx, batch in enumerate(batches):
@@ -177,97 +187,78 @@ def collate(
             "advantages": advantages,
             "padding_mask": mask,
         }
+
+        # Add generator_logprobs and loss_mask for GRPOLoss if available
+        if batch[0].generator_logprobs is not None:
+            generator_logprobs = [e.generator_logprobs for e in batch]
+            generator_logprobs = torch.stack(generator_logprobs)
+            target["generator_logprobs"] = generator_logprobs
+
+        if batch[0].loss_mask is not None:
+            loss_mask = [e.loss_mask for e in batch]
+            loss_mask = torch.stack(loss_mask)
+            target["loss_mask"] = loss_mask
+
         inputs.append(input)
         targets.append(target)
 
     return inputs, targets
 
 
-def make_dapo_loss(
-    beta: float = 0.01,
-    clip_eps_low: float = 0.2,
-    clip_eps_high: float = 0.28,
-    max_kl_threshold: float = 0.5,
-):
-    """Factory function to create DAPO loss with configurable parameters.
+def make_loss(cfg: DictConfig):
+    """Factory function to create loss based on config.
+
+    Supports both GRPOLoss and DAPOLoss based on `loss_type` config.
 
     Args:
-        beta: KL penalty coefficient (default 0.02, increased from 0.005 for stability)
-        clip_eps_low: Lower clipping bound for policy ratio
-        clip_eps_high: Upper clipping bound for policy ratio
-        max_kl_threshold: If KL exceeds this, log a warning (early stopping signal)
+        cfg: Configuration dict containing `grpo` section with:
+            - loss_type: "grpo" or "dapo" (default: "dapo")
+            - beta: KL penalty coefficient (for GRPOLoss only)
+            - clip_eps_low / clip_low: Lower clipping bound
+            - clip_eps_high / clip_high: Upper clipping bound
+            - agg_type: Aggregation type
+            - dual_clip_c: Dual-clip constant (for DAPOLoss only)
+
+    Returns:
+        Loss function (GRPOLoss or DAPOLoss instance)
     """
+    grpo_cfg = cfg.get("grpo", {})
+    loss_type = grpo_cfg.get("loss_type", "dapo").lower()
 
-    def dapo_loss(
-        logits: torch.Tensor,
-        response: torch.Tensor,
-        ref_logprobs: torch.Tensor,
-        advantages: torch.Tensor,
-        padding_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """DAPO (Direct Alignment Policy Optimization) loss function."""
-        action_log_probs = compute_logprobs(logits, response)
+    # Support both naming conventions
+    clip_low = grpo_cfg.get("clip_eps_low", grpo_cfg.get("clip_low", 0.2))
+    clip_high = grpo_cfg.get("clip_eps_high", grpo_cfg.get("clip_high", 0.28))
 
-        # Compute KL divergence for monitoring and regularization
-        # KL(policy || ref) approximation: mean(log_policy - log_ref)
-        log_ratio = action_log_probs - ref_logprobs
-        log_ratio_masked = log_ratio * padding_mask
-        kl_div = (
-            log_ratio_masked.sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)
-        ).mean()
-
-        # Log KL divergence for monitoring
-        record_metric("rl_trainer/kl_divergence", kl_div.item(), Reduce.MEAN)
-
-        # Warn if KL is too high (potential training collapse)
-        kl_div_val = kl_div.abs().item()
-        if kl_div_val > max_kl_threshold:
-            logger.warning(
-                f"KL divergence ({kl_div_val}) exceeds threshold ({max_kl_threshold}). "
-                "Consider stopping training or increasing beta."
-            )
-            record_metric("rl_trainer/kl_threshold_exceeded", 1, Reduce.SUM)
-
-        # KL penalty term (k3 approximation for stability)
-        # Note: using ref_logprobs - action_log_probs for the penalty direction
-        if beta != 0.0:
-            kl_for_penalty = (ref_logprobs - action_log_probs) * padding_mask
-            k3 = kl_for_penalty.exp() - 1 - kl_for_penalty
-
-        old_action_log_probs = action_log_probs.detach()
-
-        coef_1 = torch.exp(action_log_probs - old_action_log_probs)
-        coef_2 = torch.clamp(coef_1, 1 - clip_eps_low, 1 + clip_eps_high)
-
-        per_token_loss1 = coef_1 * advantages
-        per_token_loss2 = coef_2 * advantages
-
-        per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
-        per_token_loss = per_token_loss * padding_mask
-
-        if beta != 0.0:
-            per_token_loss = per_token_loss + beta * k3
-            # Log the KL penalty contribution
-            kl_penalty = (
-                (beta * k3).sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)
-            ).mean()
-            record_metric("rl_trainer/kl_penalty", kl_penalty.item(), Reduce.MEAN)
-
-        loss = (
-            per_token_loss.sum(dim=1) / padding_mask.sum(dim=1).clamp(min=1.0)
-        ).mean()
-
-        # Safety check: warn if loss is negative (sign of training collapse)
-        loss_val = loss.item()
-        if loss_val < 0:
-            logger.warning(
-                f"Negative loss detected ({loss_val}). Training may be unstable."
-            )
-            record_metric("rl_trainer/negative_loss_count", 1, Reduce.SUM)
-
-        return loss
-
-    return dapo_loss
+    if loss_type == "grpo":
+        beta = grpo_cfg.get("beta", 0.1)
+        agg_type = grpo_cfg.get("agg_type", "fixed_horizon")
+        logger.info(
+            f"Using GRPOLoss with clip_low={clip_low}, clip_high={clip_high}, "
+            f"beta={beta}, agg_type={agg_type}"
+        )
+        return GRPOLoss(
+            clip_low=clip_low,
+            clip_high=clip_high,
+            beta=beta,
+            agg_type=agg_type,
+        )
+    elif loss_type == "dapo":
+        dual_clip_c = grpo_cfg.get("dual_clip_c", 3.0)
+        agg_type = grpo_cfg.get("agg_type", "token_mean")
+        logger.info(
+            f"Using DAPOLoss with clip_low={clip_low}, clip_high={clip_high}, "
+            f"dual_clip_c={dual_clip_c}, agg_type={agg_type}"
+        )
+        return DAPOLoss(
+            clip_low=clip_low,
+            clip_high=clip_high,
+            dual_clip_c=dual_clip_c,
+            agg_type=agg_type,
+        )
+    else:
+        raise ValueError(
+            f"Unknown loss_type: {loss_type}. Supported: 'grpo', 'dapo'"
+        )
 
 
 @dataclass
@@ -772,14 +763,9 @@ async def main(cfg: DictConfig):
             transform_sample_fn=transform_sample_fn,
         ),
         Policy.options(**cfg.services.policy).as_service(**cfg.policy),
-        RLTrainer.options(**cfg.actors.trainer).as_actor(
+        TitanTrainer.options(**cfg.actors.trainer).as_actor(
             **cfg.trainer,
-            loss=make_dapo_loss(
-                beta=cfg.get("grpo", {}).get("beta", 0.02),
-                clip_eps_low=cfg.get("grpo", {}).get("clip_eps_low", 0.2),
-                clip_eps_high=cfg.get("grpo", {}).get("clip_eps_high", 0.28),
-                max_kl_threshold=cfg.get("grpo", {}).get("max_kl_threshold", 0.5),
-            ),
+            loss=make_loss(cfg),
         ),
         ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
             **cfg.replay_buffer, collate=collate
@@ -813,6 +799,12 @@ async def main(cfg: DictConfig):
         strategy=ts.LocalRankStrategy(),
     )
     print("Torchstore successfully initialized with local rank strategy")
+
+    # Episode dropout configuration
+    dropout_cfg = cfg.get("episode_dropout", {})
+    enable_variance_dropout = dropout_cfg.get("enable_variance_dropout", True)
+    enable_truncation_dropout = dropout_cfg.get("enable_truncation_dropout", True)
+    variance_threshold = dropout_cfg.get("variance_threshold", 1e-3)
 
     # Core RL loops
     async def continuous_rollouts():
@@ -873,12 +865,36 @@ async def main(cfg: DictConfig):
                     (group_size, max_req_tokens + max_res_tokens),
                     dtype=torch.long,
                 )
+                seq_len = max_req_tokens + max_res_tokens
 
                 # Track evaluation errors for circuit breaker
                 eval_errors_this_batch = 0
 
                 # Create episodes first
                 for i, response in enumerate(responses):
+                    # Both GRPOLoss and DAPOLoss need generator_logprobs and loss_mask
+                    # Validate logprobs exist
+                    if response.logprobs is None:
+                        raise ValueError(
+                            "Completion.logprobs is None. "
+                            "Ensure Generator returns logprobs by setting 'logprobs: 1' in sampling_params config."
+                        )
+
+                    # Prepare generator_logprobs (shifted for next-token prediction)
+                    actual_response_len = response.token_ids.shape[0]
+                    generator_logprobs = torch.zeros(seq_len, dtype=response.logprobs.dtype)
+                    generator_logprobs[
+                        max_req_tokens : max_req_tokens + actual_response_len
+                    ] = response.logprobs
+                    generator_logprobs = torch.roll(generator_logprobs, shifts=-1, dims=0)
+                    generator_logprobs[-1] = 0.0
+
+                    # Prepare loss_mask
+                    response_mask = torch.zeros(seq_len, dtype=torch.float32)
+                    response_mask[max_req_tokens : max_req_tokens + actual_response_len] = 1.0
+                    loss_mask = torch.roll(response_mask, shifts=-1, dims=0)
+                    loss_mask[-1] = 0.0
+
                     episode = Episode(
                         episode_id=str(uuid.uuid4()),
                         pad_id=pad_id,
@@ -886,6 +902,8 @@ async def main(cfg: DictConfig):
                         response_len=max_res_tokens,
                         target=target,
                         completion=response,
+                        generator_logprobs=generator_logprobs,
+                        loss_mask=loss_mask,
                     )
                     episodes.append(episode)
 
@@ -919,6 +937,60 @@ async def main(cfg: DictConfig):
                     input_ids[i, max_req_tokens:] = episode.response_tensor
 
                 t.step("reward_evaluation")
+
+                # Episode dropout logic (aligned with GRPO reference implementation)
+                # Drop entire batch if:
+                # 1. Reward variance is too low (including all 0s and all 1s)
+                # 2. Any response was truncated (didn't end with EOS)
+                rewards = [e.reward for e in episodes]
+                rewards_std = torch.std(torch.tensor(rewards))
+                is_low_variance = rewards_std < variance_threshold
+
+                num_truncated = sum(
+                    1 for e in episodes if e.stop_reason == "length"
+                )
+                is_truncated = num_truncated > 0
+
+                # Record dropout metrics
+                n = len(episodes)
+                if enable_variance_dropout:
+                    record_metric(
+                        "main/continuous_rollouts/episodes_dropped/low_variance",
+                        n if is_low_variance else 0,
+                        Reduce.SUM,
+                    )
+
+                if enable_truncation_dropout:
+                    record_metric(
+                        "main/continuous_rollouts/episodes_dropped/truncated",
+                        num_truncated,
+                        Reduce.SUM,
+                    )
+
+                # Determine if we should drop this batch
+                should_drop = (
+                    (enable_variance_dropout and is_low_variance) or
+                    (enable_truncation_dropout and is_truncated)
+                )
+
+                record_metric(
+                    "main/continuous_rollouts/episodes_dropped/total",
+                    n if should_drop else 0,
+                    Reduce.SUM,
+                )
+
+                if should_drop:
+                    if is_low_variance:
+                        logger.debug(
+                            f"[DROPOUT] Dropping batch: low reward variance "
+                            f"(std={rewards_std:.4f} < {variance_threshold})"
+                        )
+                    if is_truncated:
+                        logger.debug(
+                            f"[DROPOUT] Dropping batch: {num_truncated}/{n} episodes truncated"
+                        )
+                    del input_ids, episodes
+                    continue
 
                 # Circuit breaker: if ALL evaluations failed, something is wrong
                 if eval_errors_this_batch == len(responses):
@@ -962,6 +1034,18 @@ async def main(cfg: DictConfig):
                 for episode, advantage in zip(episodes, advantages):
                     episode.advantage = advantage
                     await replay_buffer.add.call_one(episode)
+
+                    # Track token-based metrics (aligned with GRPO)
+                    prompt_tokens = episode.completion.prompt_ids.shape[0]
+                    response_tokens = episode.completion.token_ids.shape[0]
+
+                    record_metric("episode/avg_prompt_tokens", prompt_tokens, Reduce.MEAN)
+                    record_metric("episode/max_prompt_tokens", prompt_tokens, Reduce.MAX)
+                    record_metric("episode/min_prompt_tokens", prompt_tokens, Reduce.MIN)
+                    record_metric("episode/avg_response_tokens", response_tokens, Reduce.MEAN)
+                    record_metric("episode/max_response_tokens", response_tokens, Reduce.MAX)
+                    record_metric("episode/min_response_tokens", response_tokens, Reduce.MIN)
+                    record_metric("episode/avg_reward", episode.reward, Reduce.MEAN)
 
                 rollout_count += 1
                 record_metric(
