@@ -581,7 +581,9 @@ class GenericDatasetActor(ForgeActor):
         if len(ds) == 0:
             raise ValueError("Dataset is empty after all transformations!")
 
+        self._dataset = ds  # Keep reference for looping
         self._iterator = iter(ds)
+        self._loop_count = 0
         logger.debug("GenericDatasetActor.setup Setup complete!")
 
     @endpoint
@@ -597,7 +599,16 @@ class GenericDatasetActor(ForgeActor):
                 )
             return sample
         except StopIteration:
-            return None
+            # Loop the dataset instead of returning None
+            self._loop_count += 1
+            logger.info(f"[DATASET] Completed epoch {self._loop_count}, reshuffling and restarting...")
+            record_metric("dataset/epoch_completed", 1, Reduce.SUM)
+            self._dataset = self._dataset.shuffle()
+            self._iterator = iter(self._dataset)
+            # Return first sample from new epoch
+            sample = next(self._iterator)
+            record_metric("dataset/sample/count_samples_generated", 1, Reduce.SUM)
+            return sample
 
     @endpoint
     async def pad_token(self):
@@ -805,10 +816,28 @@ async def main(cfg: DictConfig):
         rollout_timeout_s = float(os.environ.get("FORGE_ROLLOUT_TIMEOUT_S", "300"))
 
         pad_id = await dataloader.pad_token.call_one()
+
+        # Demand-driven rollout settings
+        # Only generate new episodes when buffer needs them
+        max_buffer_episodes = batch_size * group_size * 4  # 4 training steps worth
+        rollout_backpressure_interval = 0.5  # Check interval when buffer is full
+
         while not shutdown_event.is_set():
             try:
                 t = Tracer("main_perf/continuous_rollouts")
                 t.start()
+
+                # DEMAND-DRIVEN: Check if buffer needs more episodes
+                # This prevents overproduction and data waste
+                try:
+                    buffer_size = await replay_buffer._numel.call_one()
+                    if buffer_size >= max_buffer_episodes:
+                        # Buffer is full enough, wait before generating more
+                        record_metric("rollout/backpressure/paused", 1, Reduce.SUM)
+                        await asyncio.sleep(rollout_backpressure_interval)
+                        continue
+                except Exception:
+                    pass  # If health check fails, continue with rollout
 
                 # Timeout on data loading
                 try:
@@ -1066,6 +1095,15 @@ async def main(cfg: DictConfig):
             os.environ.get("FORGE_MAX_EMPTY_BUFFER_WAIT_S", "120")
         ) * 10  # Convert seconds to 0.1s intervals
 
+        # OPTIMIZATION: Batch multiple training steps before weight update
+        # This reduces waste by consuming more episodes before policy version changes
+        # With weight_update_frequency=4 and batch_size=2, group_size=8:
+        #   - Each train_step uses 16 episodes
+        #   - 4 steps = 64 episodes consumed before weight update
+        #   - Episodes stay "fresh" (same policy version) for 4 steps instead of 1
+        weight_update_frequency = int(os.environ.get("FORGE_WEIGHT_UPDATE_FREQUENCY", "4"))
+        steps_since_weight_update = 0
+
         while max_steps == -1 or training_step < max_steps:
             if restart_tracer:
                 t = Tracer("main_perf/continuous_training")
@@ -1120,74 +1158,81 @@ async def main(cfg: DictConfig):
 
                 await trainer.train_step.call(batch)
                 training_step += 1
+                steps_since_weight_update += 1
                 t.step("train_step")
 
-                await trainer.push_weights.call(training_step)
-                t.step("push_weights")
+                # Only update weights every N steps to reduce waste
+                # This allows more episodes to be consumed before policy version changes
+                if steps_since_weight_update >= weight_update_frequency:
+                    steps_since_weight_update = 0
+                    record_metric("training/weight_update_triggered", 1, Reduce.SUM)
 
-                # Backpressure: Check buffer health for NEXT policy version.
-                # Weight updates block all rollouts, so we need enough buffer headroom
-                # to survive the blocking period without starving.
-                # CRITICAL: Check training_step + 1 because after weight update,
-                # episodes from current version will be evicted!
-                buffer_health = await replay_buffer.health_check.call_one(
-                    curr_policy_version=training_step + 1  # Check NEXT version survivability
-                )
-                required_surviving = buffer_health["required"] * 2  # Need 2x batch for safety margin
-                surviving = buffer_health["surviving_after_eviction"]
+                    await trainer.push_weights.call(training_step)
+                    t.step("push_weights")
 
-                if surviving < required_surviving:
-                    backpressure_start = time.time()
-                    max_backpressure_wait = float(os.environ.get("FORGE_BACKPRESSURE_TIMEOUT_S", "30"))
-                    logger.warning(
-                        f"[BACKPRESSURE] Buffer low before weight update at step {training_step}. "
-                        f"surviving={surviving}, required={required_surviving}. "
-                        f"Waiting up to {max_backpressure_wait}s for more episodes."
+                    # Backpressure: Check buffer health for NEXT policy version.
+                    # Weight updates block all rollouts, so we need enough buffer headroom
+                    # to survive the blocking period without starving.
+                    # CRITICAL: Check training_step + 1 because after weight update,
+                    # episodes from current version will be evicted!
+                    buffer_health = await replay_buffer.health_check.call_one(
+                        curr_policy_version=training_step + 1  # Check NEXT version survivability
                     )
-                    record_metric("backpressure/triggered", 1, Reduce.SUM)
+                    required_surviving = buffer_health["required"] * 2  # Need 2x batch for safety margin
+                    surviving = buffer_health["surviving_after_eviction"]
 
-                    # Wait with exponential backoff
-                    wait_interval = 0.5
-                    while (time.time() - backpressure_start) < max_backpressure_wait:
-                        await asyncio.sleep(wait_interval)
-                        wait_interval = min(wait_interval * 1.5, 5.0)  # Cap at 5s intervals
-
-                        buffer_health = await replay_buffer.health_check.call_one(
-                            curr_policy_version=training_step + 1
-                        )
-                        if buffer_health["surviving_after_eviction"] >= required_surviving:
-                            wait_duration = time.time() - backpressure_start
-                            logger.info(f"[BACKPRESSURE] Buffer recovered after {wait_duration:.1f}s")
-                            record_metric("backpressure/wait_duration_s", wait_duration, Reduce.MEAN)
-                            break
-                    else:
-                        wait_duration = time.time() - backpressure_start
+                    if surviving < required_surviving:
+                        backpressure_start = time.time()
+                        max_backpressure_wait = float(os.environ.get("FORGE_BACKPRESSURE_TIMEOUT_S", "30"))
                         logger.warning(
-                            f"[BACKPRESSURE] Buffer still low after {wait_duration:.1f}s. "
-                            f"Proceeding with weight update to prevent complete stall."
+                            f"[BACKPRESSURE] Buffer low before weight update at step {training_step}. "
+                            f"surviving={surviving}, required={required_surviving}. "
+                            f"Waiting up to {max_backpressure_wait}s for more episodes."
                         )
-                        record_metric("backpressure/timeout", 1, Reduce.SUM)
-                t.step("backpressure_check")
+                        record_metric("backpressure/triggered", 1, Reduce.SUM)
 
-                # Track weight update duration for monitoring
-                weight_update_start = time.time()
-                await policy.update_weights.fanout(training_step)
-                weight_update_duration = time.time() - weight_update_start
-                record_metric("training/weight_update_duration_s", weight_update_duration, Reduce.MEAN)
-                if weight_update_duration > 20.0:
-                    logger.warning(
-                        f"[SLOW WEIGHT UPDATE] Step {training_step} took {weight_update_duration:.1f}s. "
-                        f"Consider increasing off_by_n or policy replicas."
-                    )
-                    record_metric("training/slow_weight_update_count", 1, Reduce.SUM)
-                t.step("update_weights")
+                        # Wait with exponential backoff
+                        wait_interval = 0.5
+                        while (time.time() - backpressure_start) < max_backpressure_wait:
+                            await asyncio.sleep(wait_interval)
+                            wait_interval = min(wait_interval * 1.5, 5.0)  # Cap at 5s intervals
 
-                if training_step >= 2:
-                    await drop_weights(training_step - 1)
-                    t.step("drop_weights")
+                            buffer_health = await replay_buffer.health_check.call_one(
+                                curr_policy_version=training_step + 1
+                            )
+                            if buffer_health["surviving_after_eviction"] >= required_surviving:
+                                wait_duration = time.time() - backpressure_start
+                                logger.info(f"[BACKPRESSURE] Buffer recovered after {wait_duration:.1f}s")
+                                record_metric("backpressure/wait_duration_s", wait_duration, Reduce.MEAN)
+                                break
+                        else:
+                            wait_duration = time.time() - backpressure_start
+                            logger.warning(
+                                f"[BACKPRESSURE] Buffer still low after {wait_duration:.1f}s. "
+                                f"Proceeding with weight update to prevent complete stall."
+                            )
+                            record_metric("backpressure/timeout", 1, Reduce.SUM)
+                    t.step("backpressure_check")
 
-                t.stop()
-                restart_tracer = True
+                    # Track weight update duration for monitoring
+                    weight_update_start = time.time()
+                    await policy.update_weights.fanout(training_step)
+                    weight_update_duration = time.time() - weight_update_start
+                    record_metric("training/weight_update_duration_s", weight_update_duration, Reduce.MEAN)
+                    if weight_update_duration > 20.0:
+                        logger.warning(
+                            f"[SLOW WEIGHT UPDATE] Step {training_step} took {weight_update_duration:.1f}s. "
+                            f"Consider increasing off_by_n or policy replicas."
+                        )
+                        record_metric("training/slow_weight_update_count", 1, Reduce.SUM)
+                    t.step("update_weights")
+
+                    if training_step >= 2:
+                        await drop_weights(training_step - 1)
+                        t.step("drop_weights")
+
+                    t.stop()
+                    restart_tracer = True
 
                 await mlogger.flush.call_one(training_step)
 
