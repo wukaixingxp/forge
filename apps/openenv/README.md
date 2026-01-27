@@ -6,7 +6,7 @@ A centralized framework for training language models on any OpenEnv task using G
 
 - **GenericEnvClient**: Works with ANY OpenEnv Docker image without requiring environment-specific packages locally
 - **GenericAction**: Simple dict wrapper that maps to environment-specific actions at runtime
-- **Single Main Script**: One `main_generic.py` works for all OpenEnv tasks
+- **Single Main Script**: One `main.py` works for all OpenEnv tasks
 - **Circuit Breaker Pattern**: Automatic detection and restart of unhealthy Docker containers
 - **Episode Dropout**: Configurable filtering of low-quality training batches
 - **GRPO/DAPO Loss**: Switchable loss functions with configurable parameters
@@ -16,11 +16,11 @@ A centralized framework for training language models on any OpenEnv task using G
 
 ```
 apps/openenv/
-  ├── main_generic.py              # Generic training script (use this)
-  ├── julia_utils_generic.py       # Julia task utilities (GenericAction)
-  ├── python_utils_generic.py      # Python task utilities (GenericAction)
-  ├── llama3_8b_julia_generic.yaml # Julia training config
-  ├── llama3_8b_coding_generic.yaml# Python coding training config
+  ├── main.py              # Generic training script (use this)
+  ├── julia_utils.py       # Julia task utilities (GenericAction)
+  ├── python_utils.py      # Python task utilities (GenericAction)
+  ├── llama3_8b_julia.yaml # Julia training config
+  ├── llama3_8b_coding.yaml# Python coding training config
   └── README.md                    # This file
 ```
 
@@ -29,13 +29,13 @@ apps/openenv/
 ### Run Julia Training
 
 ```bash
-python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
+python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
 ```
 
 ### Run Python Coding Training
 
 ```bash
-python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_coding_generic.yaml
+python -m apps.openenv.main --config apps/openenv/llama3_8b_coding.yaml
 ```
 
 ## YAML Configuration
@@ -48,9 +48,9 @@ Each task config needs at minimum:
 # Task-specific configuration
 task:
   env_name: "julia"  # Environment name
-  build_action: !function apps.openenv.julia_utils_generic.build_julia_action
-  evaluate_response: !function apps.openenv.julia_utils_generic.evaluate_julia_response
-  transform_sample: !function apps.openenv.julia_utils_generic.transform_julia_sample
+  build_action: !function apps.openenv.julia_utils.build_julia_action
+  evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
+  transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
 
 # OpenEnv configuration - only docker_image is required!
 openenv_config:
@@ -96,9 +96,9 @@ circuit_breaker:
 # Task configuration
 task:
   env_name: "julia"
-  build_action: !function apps.openenv.julia_utils_generic.build_julia_action
-  evaluate_response: !function apps.openenv.julia_utils_generic.evaluate_julia_response
-  transform_sample: !function apps.openenv.julia_utils_generic.transform_julia_sample
+  build_action: !function apps.openenv.julia_utils.build_julia_action
+  evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
+  transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
 
 # Dataset configuration
 dataset:
@@ -127,7 +127,7 @@ To add support for a new language (e.g., Rust):
 
 ### 1. Create Utils File
 
-Create `apps/openenv/rust_utils_generic.py`:
+Create `apps/openenv/rust_utils.py`:
 
 ```python
 from typing import Any, Dict
@@ -208,7 +208,7 @@ def transform_rust_sample(sample: Dict[str, Any], tokenizer) -> Dict[str, Any] |
 
 ### 2. Create YAML Config
 
-Create `apps/openenv/llama3_8b_rust_generic.yaml`:
+Create `apps/openenv/llama3_8b_rust.yaml`:
 
 ```yaml
 # Rust training config using GenericEnvClient
@@ -226,9 +226,9 @@ grpo:
 
 task:
   env_name: "rust"
-  build_action: !function apps.openenv.rust_utils_generic.build_rust_action
-  evaluate_response: !function apps.openenv.rust_utils_generic.evaluate_rust_response
-  transform_sample: !function apps.openenv.rust_utils_generic.transform_rust_sample
+  build_action: !function apps.openenv.rust_utils.build_rust_action
+  evaluate_response: !function apps.openenv.rust_utils.evaluate_rust_response
+  transform_sample: !function apps.openenv.rust_utils.transform_rust_sample
 
 dataset:
   path: "path/to/rust/dataset"
@@ -247,7 +247,7 @@ openenv_config:
 ### 3. Run Training
 
 ```bash
-python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_rust_generic.yaml
+python -m apps.openenv.main --config apps/openenv/llama3_8b_rust.yaml
 ```
 
 ## Task Utils API
@@ -278,7 +278,7 @@ Each task utils file should implement these functions:
 
 ### GenericEnvClient
 
-The `GenericOpenEnvClientActor` manages Docker containers and WebSocket connections:
+The `OpenEnvActor` manages Docker containers and WebSocket connections:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -338,7 +338,7 @@ Key metrics tracked:
 
 Set log level via environment variable:
 ```bash
-LOG_LEVEL=DEBUG python -m apps.openenv.main_generic --config ...
+LOG_LEVEL=DEBUG python -m apps.openenv.main --config ...
 ```
 
 ### Weights & Biases
@@ -356,7 +356,7 @@ metric_logging:
 
 ### GPU Memory
 
-Enable expandable segments (set automatically in main_generic.py):
+Enable expandable segments (set automatically in main.py):
 ```python
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 ```

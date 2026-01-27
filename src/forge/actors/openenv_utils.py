@@ -7,8 +7,7 @@
 """
 Shared utilities for OpenEnv actors.
 
-This module contains common utility functions used by GenericOpenEnvActor
-and GenericOpenEnvClientActor.
+This module contains common utility functions used by OpenEnvActor.
 """
 
 import logging

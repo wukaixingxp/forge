@@ -1,26 +1,23 @@
-# Grouped Relative Policy Optimization (GRPO) for Python Code Generation
+# Grouped Relative Policy Optimization (GRPO) for Julia Code Generation
 # Using GenericEnvClient (no environment-specific packages required)
-# >>> python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_coding_generic.yaml
+# >>> python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
 
 # Global configuration
 group_size: 8
 batch_size: 2
 max_req_tokens: 1024
-max_res_tokens: 2048
-model: "/home/kaiwu/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
-off_by_n: 1  # Allow episodes from previous 2 policy versions to prevent buffer starvation
+max_res_tokens: 1024
+model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+off_by_n: 1
+compile: true # Enable torch.compile for trainer/ref_model, and CUDA graphs for vLLM
 
-# GRPO/DAPO loss configuration
+# GRPO/DAPO loss configuration - tuned for stability
 grpo:
-  loss_type: dapo             # Options: "grpo" or "dapo" (default: dapo)
+  loss_type: grpo             # Options: "grpo" or "dapo" (default: dapo)
   # Common parameters
-  clip_eps_low: 0.2           # Lower clipping bound (alias: clip_low)
-  clip_eps_high: 0.28         # Upper clipping bound (alias: clip_high)
-  agg_type: token_mean        # Aggregation: "token_mean" (DAPO) or "fixed_horizon" (GRPO)
+  agg_type: fixed_horizon     # Aggregation: "fixed_horizon" (GRPO) or "token_mean" (DAPO)
   # GRPO-specific parameters
   beta: 0.1                   # KL penalty coefficient (only used when loss_type: grpo)
-  # DAPO-specific parameters
-  dual_clip_c: 3.0            # Dual-clip constant (only used when loss_type: dapo)
 
 # Episode dropout configuration (aligned with GRPO reference)
 episode_dropout:
@@ -29,19 +26,27 @@ episode_dropout:
   variance_threshold: 0.001       # std threshold for variance dropout
 
 # Main loop configuration
-rollout_threads: 2
-sample_timeout_s: 300
-evaluation_timeout_s: 60.0
+rollout_threads: 1
+sample_timeout_s: 15
+# IMPORTANT: evaluation_timeout_s must be > JULIA_EXECUTION_TIMEOUT to allow Julia
+# to kill stuck workers and recover. Julia timeout = 15s, so we wait 20s.
+evaluation_timeout_s: 20.0
 
-# Task-specific configuration using GenericAction (no coding_env import needed)
+# Circuit breaker configuration - triggers container restart on repeated failures
+circuit_breaker:
+  threshold: 5            # Number of timeouts before tripping
+  window_s: 60.0          # Time window for counting timeouts
+  cooldown_s: 60.0        # Wait time for container restart to complete
+
+# Task-specific configuration using GenericAction (no julia_env import needed)
 task:
-  env_name: "coding"
-  # Use the _generic version which uses GenericAction instead of CodeAction
-  build_action: !function apps.openenv.python_utils_generic.build_python_action
-  evaluate_response: !function apps.openenv.python_utils_generic.evaluate_python_response
-  transform_sample: !function apps.openenv.python_utils_generic.transform_python_sample
+  env_name: "julia"
+  # Use julia_utils which uses GenericAction instead of JuliaAction
+  build_action: !function apps.openenv.julia_utils.build_julia_action
+  evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
+  transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
 
-# Observability configuration
+#Observability configuration
 metric_logging:
   wandb:
     entity: "torchforge"
@@ -54,7 +59,7 @@ metric_logging:
 # Dataset configuration
 dataset:
   # TODO: Replace with your dataset path
-  path: "/home/kaiwu/work/kaiwu/AceCoder/train/train_rl/OpenRLHF/scripts/data/acecode_89k/acecode_hard02.json"
+  path: "/home/kaiwu/work/amd/amd-submission/julia_trainset.parquet"
   revision: "main"
   data_split: "train"
   streaming: false
@@ -63,20 +68,23 @@ dataset:
 # OpenEnv configuration - only docker_image is required!
 # GenericEnvClient handles everything else automatically
 openenv_config:
-  docker_image: "coding-env:latest"  # Just specify the image, no env_class needed
-  env_name: "coding"                 # Environment name for logging paths
+  docker_image: "julia-env:latest"  # Just specify the image, no env_class needed
+  env_name: "julia"                 # Environment name for logging paths
   container_timeout_s: 180.0
-  container_memory_gb: 128
+  container_memory_gb: 1024
   port: 8000
-  num_worker: 16
-  request_timeout_s: 60.0
-  # Environment-specific env vars
+  num_env_actors: 2              # Multiple actors for circuit breaker isolation
+  num_containers: 2              # 1 container per actor (2 total)
+  num_connections: 12            # Connections per container (24 total across 2 actors)
+  request_timeout_s: 20.0        # Should be > JULIA_EXECUTION_TIMEOUT to allow recovery
   env_vars:
-    PYTHON_ADDITIONAL_IMPORTS: "sys,os,functools,typing,numpy,dataclasses,copy,heapq,enum,string,ast,json,struct,base64,csv,math,cmath,abc,contextlib,inspect,secrets,uuid,pathlib,io,threading,asyncio,concurrent.futures,urllib.parse,socket,random,itertools,collections,time,datetime,re,statistics"
+    JULIAUP_OFFLINE: "1"            # Disable juliaup version checks (no internet on cluster)
+    JULIA_EXECUTION_TIMEOUT: "15"   # Julia-side timeout (must be < request_timeout_s)
+    JULIA_MAX_WORKERS: "32"         # Number of concurrent Julia worker processes
 
 # Policy configuration
 policy:
-  prefetch_weights_to_shm: false
+  prefetch_weights_to_shm: false  # GPU Direct RDMA is now fixed with proper timeout
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -102,10 +110,10 @@ trainer:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: ${model}
+    hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
-    lr: 1e-5
+    lr: 5e-6  # Reduced from 1e-5 for training stability
     eps: 1e-8
     weight_decay: 0.01
   lr_scheduler:
@@ -118,7 +126,7 @@ trainer:
     dtype: bfloat16
     gc_freq: 1
   compile:
-    enable: false
+    enable: ${compile}
   parallelism:
     data_parallel_replicate_degree: 1
     data_parallel_shard_degree: 1
@@ -129,8 +137,8 @@ trainer:
     disable_loss_parallel: true
   checkpoint:
     enable: true
-    folder: "checkpoint_llama3_8b_coding_generic"
-    initial_load_path: ${model}
+    folder: "checkpoint_llama3_8b_julia"
+    initial_load_path: hf://${model}  # The path to load the initial checkpoint from. Ignored if `folder` exists.
     initial_load_in_hf: true
     last_save_in_hf: true
     interval: 150
@@ -150,7 +158,7 @@ ref_model:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: ${model}
+    hf_assets_path: hf://${model}
   training:
     seq_len: ${trainer.training.seq_len}
     dtype: bfloat16
@@ -166,14 +174,14 @@ ref_model:
     expert_parallel_degree: 1
   checkpoint:
     enable: true
-    initial_load_path: ${model}
+    initial_load_path: hf://${model}
     initial_load_in_hf: true
 
 # All resource allocations
 services:
   policy:
     procs: ${policy.engine_args.tensor_parallel_size}
-    num_replicas: 2
+    num_replicas: 1
     mesh_name: policy
     with_gpus: true
   ref_model:
@@ -204,7 +212,7 @@ actors:
     procs: 1
     with_gpus: false
     mesh_name: compute_advantages
-  coding_env:
+  julia_env:
     procs: 1
     with_gpus: false
-    mesh_name: coding_env
+    mesh_name: julia_env

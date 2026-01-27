@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-Generic OpenEnv Actor using GenericEnvClient.
+OpenEnv Actor for sandboxed code execution.
 
 This actor works with ANY OpenEnv environment using only raw dictionaries,
 without requiring environment-specific packages (like julia_env or coding_env).
@@ -14,7 +14,7 @@ Usage:
     from openenv import GenericEnvClient, GenericAction
 
     # Create actor for any environment - just specify the Docker image
-    actor = GenericOpenEnvClientActor(
+    actor = OpenEnvActor(
         docker_image="julia-env:latest",
         env_name="julia",
     )
@@ -49,14 +49,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
-class GenericOpenEnvClientActor(ForgeActor):
+class OpenEnvActor(ForgeActor):
     """A generic sandboxed execution environment using GenericEnvClient.
 
     This actor manages WebSocket connections to Docker containers,
     with connection pooling for high concurrency.
 
     Usage:
-        >>> actor = GenericOpenEnvClientActor(
+        >>> actor = OpenEnvActor(
         ...     docker_image="julia-env:latest",
         ...     env_name="julia",
         ...     num_connections=16,

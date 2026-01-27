@@ -15,9 +15,9 @@ Usage:
     # In your YAML config:
     task:
       env_name: "coding"
-      build_action: !function apps.openenv.python_utils_generic.build_python_action
-      evaluate_response: !function apps.openenv.python_utils_generic.evaluate_python_response
-      transform_sample: !function apps.openenv.python_utils_generic.transform_python_sample
+      build_action: !function apps.openenv.python_utils.build_python_action
+      evaluate_response: !function apps.openenv.python_utils.evaluate_python_response
+      transform_sample: !function apps.openenv.python_utils.transform_python_sample
 """
 
 import re

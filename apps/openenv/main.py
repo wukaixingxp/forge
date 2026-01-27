@@ -5,14 +5,14 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-Generic OpenEnv GRPO Training Script using GenericEnvClient.
+OpenEnv GRPO Training Script using GenericEnvClient.
 
 This version uses GenericEnvClient and GenericAction to work with ANY
 OpenEnv environment without requiring environment-specific packages.
 
 Usage:
-    python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
-    python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_coding_generic.yaml
+    python -m apps.openenv.main --config apps/openenv/llama3_8b_julia.yaml
+    python -m apps.openenv.main --config apps/openenv/llama3_8b_coding.yaml
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ import torchstore as ts
 import yaml
 from datasets import load_dataset
 from forge.actors.generator import Generator
-from forge.actors.generic_openenv_client import GenericOpenEnvClientActor
+from forge.actors.openenv import OpenEnvActor
 from forge.actors.openenv_utils import find_available_port
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
@@ -264,7 +264,7 @@ class GenericRewardActor(ForgeActor):
     restart unhealthy containers.
     """
 
-    env_actors: list  # List of GenericOpenEnvClientActor instances
+    env_actors: list  # List of OpenEnvActor instances
     build_action_fn: Callable[[str, Dict[str, Any]], GenericAction]
     evaluate_response_fn: Callable[[StepResult, str, Dict[str, Any]], float]
     evaluation_timeout_s: float = 60.0
@@ -532,11 +532,9 @@ class GenericDatasetActor(ForgeActor):
         if str(openenv_dir) not in sys.path:
             sys.path.insert(0, str(openenv_dir))
 
-        logger.debug("GenericDatasetActor.setup Starting setup...")
         self._tokenizer = get_tokenizer(self.model)
-        logger.debug("GenericDatasetActor.setup Tokenizer loaded successfully")
 
-        logger.debug(f"GenericDatasetActor.setup Loading dataset from: {self.path}")
+        logger.info(f"Loading dataset from: {self.path}")
         if os.path.isfile(self.path):
             if self.path.endswith(".parquet"):
                 ds = load_dataset(
@@ -563,14 +561,16 @@ class GenericDatasetActor(ForgeActor):
         if len(ds) == 0:
             raise ValueError(f"Dataset is empty after loading from {self.path}.")
 
-        if self.transform_sample_fn:
+        logger.info(f"Dataset loaded, size: {len(ds)}")
 
+        if self.transform_sample_fn:
             def transform_wrapper(sample):
                 return self.transform_sample_fn(sample, self._tokenizer)
 
             original_size = len(ds)
             ds = ds.filter(lambda x: transform_wrapper(x) is not None)
             filtered_size = len(ds)
+            logger.info(f"Dataset filtered: {original_size} -> {filtered_size}")
 
             if filtered_size == 0:
                 raise ValueError(
@@ -587,7 +587,7 @@ class GenericDatasetActor(ForgeActor):
         self._dataset = ds  # Keep reference for looping
         self._iterator = iter(ds)
         self._loop_count = 0
-        logger.debug("GenericDatasetActor.setup Setup complete!")
+        logger.info(f"Dataset setup complete! Size: {len(ds)}")
 
     @endpoint
     async def sample(self) -> dict[str, str] | None:
@@ -617,8 +617,7 @@ class GenericDatasetActor(ForgeActor):
     async def pad_token(self):
         if self._tokenizer.pad_token_id is not None:
             return self._tokenizer.pad_token_id
-        else:
-            return self._tokenizer.eos_token_id
+        return self._tokenizer.eos_token_id
 
 
 async def main(cfg: DictConfig):
@@ -676,7 +675,7 @@ async def main(cfg: DictConfig):
     mlogger = await get_or_create_metric_logger(process_name="Controller")
     await mlogger.init_backends.call_one(metric_logging_cfg)
 
-    # Setup GenericOpenEnvClientActor - works with ANY OpenEnv Docker image
+    # Setup OpenEnvActor - works with ANY OpenEnv Docker image
     openenv_config = cfg.get("openenv_config", {})
     docker_image = openenv_config.get("docker_image")
     env_vars = openenv_config.get("env_vars", {})
@@ -694,7 +693,7 @@ async def main(cfg: DictConfig):
     env_name = openenv_config.get("env_name", task_config.get("env_name", "generic"))
 
     logger.debug(
-        f"main Initializing GenericOpenEnvClientActor with image={docker_image}..."
+        f"main Initializing OpenEnvActor with image={docker_image}..."
     )
 
     # Smart container allocation: Create one actor per concurrent evaluation needed
@@ -722,7 +721,7 @@ async def main(cfg: DictConfig):
             f"Creating env_actor {i+1}/{num_env_actors} starting at port {actor_port}"
         )
 
-        env_actor = await GenericOpenEnvClientActor.options(
+        env_actor = await OpenEnvActor.options(
             **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
         ).as_actor(
             docker_image=docker_image,
@@ -807,281 +806,270 @@ async def main(cfg: DictConfig):
 
     # Core RL loops
     async def continuous_rollouts():
-        rollout_count = 0
-        consecutive_errors = 0
-        max_consecutive_errors = int(os.environ.get("FORGE_MAX_ROLLOUT_ERRORS", "50"))
-        rollout_timeout_s = float(os.environ.get("FORGE_ROLLOUT_TIMEOUT_S", "300"))
+        try:
+            rollout_count = 0
+            consecutive_errors = 0
+            max_consecutive_errors = int(os.environ.get("FORGE_MAX_ROLLOUT_ERRORS", "50"))
+            rollout_timeout_s = float(os.environ.get("FORGE_ROLLOUT_TIMEOUT_S", "300"))
 
-        pad_id = await dataloader.pad_token.call_one()
+            pad_id = await dataloader.pad_token.call_one()
 
-        # Demand-driven rollout settings
-        # Only generate new episodes when buffer needs them
-        max_buffer_episodes = batch_size * group_size * 4  # 4 training steps worth
-        rollout_backpressure_interval = 0.5  # Check interval when buffer is full
-
-        while not shutdown_event.is_set():
-            try:
-                t = Tracer("main_perf/continuous_rollouts")
-                t.start()
-
-                # DEMAND-DRIVEN: Check if buffer needs more episodes
-                # This prevents overproduction and data waste
+            while not shutdown_event.is_set():
                 try:
-                    buffer_size = await replay_buffer._numel.call_one()
-                    if buffer_size >= max_buffer_episodes:
-                        # Buffer is full enough, wait before generating more
-                        record_metric("rollout/backpressure/paused", 1, Reduce.SUM)
-                        await asyncio.sleep(rollout_backpressure_interval)
-                        continue
-                except Exception:
-                    pass  # If health check fails, continue with rollout
+                    t = Tracer("main_perf/continuous_rollouts")
+                    t.start()
 
-                # Timeout on data loading
-                try:
-                    sample = await asyncio.wait_for(
-                        dataloader.sample.call_one(),
-                        timeout=30.0,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning("[ROLLOUT] Timeout waiting for dataloader sample")
-                    record_metric("main/continuous_rollouts/dataloader_timeout", 1, Reduce.SUM)
-                    continue
-
-                if sample is None:
-                    print("Dataloader is empty, exiting continuous rollout")
-                    return
-
-                t.step("data_loading")
-
-                prompt, target = sample["request"], sample["target"]
-
-                # Timeout on policy generation
-                try:
-                    responses: list[Completion] = await asyncio.wait_for(
-                        policy.generate.route(prompt),
-                        timeout=rollout_timeout_s,
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(
-                        f"[ROLLOUT] Timeout after {rollout_timeout_s}s waiting for policy.generate(). "
-                        f"Generator may be stuck during weight update."
-                    )
-                    record_metric("main/continuous_rollouts/generation_timeout", 1, Reduce.SUM)
-                    consecutive_errors += 1
-                    if consecutive_errors >= max_consecutive_errors:
-                        raise RuntimeError(
-                            f"[ROLLOUT FAILURE] {consecutive_errors} consecutive rollout errors. "
-                            f"Generator appears to be unresponsive."
-                        )
-                    continue
-
-                t.step("policy_generation")
-
-                episodes = []
-                input_ids = torch.ones(
-                    (group_size, max_req_tokens + max_res_tokens),
-                    dtype=torch.long,
-                )
-                seq_len = max_req_tokens + max_res_tokens
-
-                # Track evaluation errors for circuit breaker
-                eval_errors_this_batch = 0
-
-                # Create episodes first
-                for i, response in enumerate(responses):
-                    # Both GRPOLoss and DAPOLoss need generator_logprobs and loss_mask
-                    # Validate logprobs exist
-                    if response.logprobs is None:
-                        raise ValueError(
-                            "Completion.logprobs is None. "
-                            "Ensure Generator returns logprobs by setting 'logprobs: 1' in sampling_params config."
-                        )
-
-                    # Prepare generator_logprobs (shifted for next-token prediction)
-                    actual_response_len = response.token_ids.shape[0]
-                    generator_logprobs = torch.zeros(seq_len, dtype=response.logprobs.dtype)
-                    generator_logprobs[
-                        max_req_tokens : max_req_tokens + actual_response_len
-                    ] = response.logprobs
-                    generator_logprobs = torch.roll(generator_logprobs, shifts=-1, dims=0)
-                    generator_logprobs[-1] = 0.0
-
-                    # Prepare loss_mask
-                    response_mask = torch.zeros(seq_len, dtype=torch.float32)
-                    response_mask[max_req_tokens : max_req_tokens + actual_response_len] = 1.0
-                    loss_mask = torch.roll(response_mask, shifts=-1, dims=0)
-                    loss_mask[-1] = 0.0
-
-                    episode = Episode(
-                        episode_id=str(uuid.uuid4()),
-                        pad_id=pad_id,
-                        request_len=max_req_tokens,
-                        response_len=max_res_tokens,
-                        target=target,
-                        completion=response,
-                        generator_logprobs=generator_logprobs,
-                        loss_mask=loss_mask,
-                    )
-                    episodes.append(episode)
-
-                # Parallel reward evaluation using asyncio.gather
-                async def evaluate_single(idx, episode, response):
+                    # Timeout on data loading
                     try:
-                        reward = await reward_actor.evaluate_response.route(
-                            prompt=prompt, response=response.text, target=target
+                        sample = await asyncio.wait_for(
+                            dataloader.sample.call_one(),
+                            timeout=30.0,
                         )
-                        return idx, reward, None
-                    except Exception as e:
-                        return idx, 0.0, e
+                    except asyncio.TimeoutError:
+                        logger.warning("[ROLLOUT] Timeout waiting for dataloader sample")
+                        record_metric("main/continuous_rollouts/dataloader_timeout", 1, Reduce.SUM)
+                        continue
 
-                eval_tasks = [
-                    evaluate_single(i, ep, resp)
-                    for i, (ep, resp) in enumerate(zip(episodes, responses))
-                ]
-                eval_results = await asyncio.gather(*eval_tasks)
+                    if sample is None:
+                        print("Dataloader is empty, exiting continuous rollout")
+                        return
 
-                # Process results
-                for idx, reward, error in eval_results:
-                    episodes[idx].reward = reward
-                    if error is not None:
-                        logger.warning(f"[ROLLOUT] Reward evaluation failed: {error}")
-                        eval_errors_this_batch += 1
-                        record_metric("main/continuous_rollouts/eval_error", 1, Reduce.SUM)
+                    t.step("data_loading")
 
-                # Build input_ids after rewards are assigned
-                for i, episode in enumerate(episodes):
-                    input_ids[i, :max_req_tokens] = episode.request_tensor
-                    input_ids[i, max_req_tokens:] = episode.response_tensor
+                    prompt, target = sample["request"], sample["target"]
 
-                t.step("reward_evaluation")
+                    # Timeout on policy generation
+                    try:
+                        responses: list[Completion] = await asyncio.wait_for(
+                            policy.generate.route(prompt),
+                            timeout=rollout_timeout_s,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            f"[ROLLOUT] Timeout after {rollout_timeout_s}s waiting for policy.generate(). "
+                            f"Generator may be stuck during weight update."
+                        )
+                        record_metric("main/continuous_rollouts/generation_timeout", 1, Reduce.SUM)
+                        consecutive_errors += 1
+                        if consecutive_errors >= max_consecutive_errors:
+                            raise RuntimeError(
+                                f"[ROLLOUT FAILURE] {consecutive_errors} consecutive rollout errors. "
+                                f"Generator appears to be unresponsive."
+                            )
+                        continue
 
-                # Episode dropout logic (aligned with GRPO reference implementation)
-                # Drop entire batch if:
-                # 1. Reward variance is too low (including all 0s and all 1s)
-                # 2. Any response was truncated (didn't end with EOS)
-                rewards = [e.reward for e in episodes]
-                rewards_std = torch.std(torch.tensor(rewards))
-                is_low_variance = rewards_std < variance_threshold
+                    t.step("policy_generation")
 
-                num_truncated = sum(
-                    1 for e in episodes if e.stop_reason == "length"
-                )
-                is_truncated = num_truncated > 0
+                    episodes = []
+                    input_ids = torch.ones(
+                        (group_size, max_req_tokens + max_res_tokens),
+                        dtype=torch.long,
+                    )
+                    seq_len = max_req_tokens + max_res_tokens
 
-                # Record dropout metrics
-                n = len(episodes)
-                if enable_variance_dropout:
+                    # Track evaluation errors for circuit breaker
+                    eval_errors_this_batch = 0
+
+                    # Create episodes first
+                    for i, response in enumerate(responses):
+                        # Both GRPOLoss and DAPOLoss need generator_logprobs and loss_mask
+                        # Validate logprobs exist
+                        if response.logprobs is None:
+                            raise ValueError(
+                                "Completion.logprobs is None. "
+                                "Ensure Generator returns logprobs by setting 'logprobs: 1' in sampling_params config."
+                            )
+
+                        # Prepare generator_logprobs (shifted for next-token prediction)
+                        actual_response_len = response.token_ids.shape[0]
+                        generator_logprobs = torch.zeros(seq_len, dtype=response.logprobs.dtype)
+                        generator_logprobs[
+                            max_req_tokens : max_req_tokens + actual_response_len
+                        ] = response.logprobs
+                        generator_logprobs = torch.roll(generator_logprobs, shifts=-1, dims=0)
+                        generator_logprobs[-1] = 0.0
+
+                        # Prepare loss_mask
+                        response_mask = torch.zeros(seq_len, dtype=torch.float32)
+                        response_mask[max_req_tokens : max_req_tokens + actual_response_len] = 1.0
+                        loss_mask = torch.roll(response_mask, shifts=-1, dims=0)
+                        loss_mask[-1] = 0.0
+
+                        episode = Episode(
+                            episode_id=str(uuid.uuid4()),
+                            pad_id=pad_id,
+                            request_len=max_req_tokens,
+                            response_len=max_res_tokens,
+                            target=target,
+                            completion=response,
+                            generator_logprobs=generator_logprobs,
+                            loss_mask=loss_mask,
+                        )
+                        episodes.append(episode)
+
+                    # Parallel reward evaluation using asyncio.gather
+                    async def evaluate_single(idx, episode, response):
+                        try:
+                            reward = await reward_actor.evaluate_response.route(
+                                prompt=prompt, response=response.text, target=target
+                            )
+                            return idx, reward, None
+                        except Exception as e:
+                            return idx, 0.0, e
+
+                    eval_tasks = [
+                        evaluate_single(i, ep, resp)
+                        for i, (ep, resp) in enumerate(zip(episodes, responses))
+                    ]
+                    eval_results = await asyncio.gather(*eval_tasks)
+
+                    # Process results
+                    for idx, reward, error in eval_results:
+                        episodes[idx].reward = reward
+                        if error is not None:
+                            logger.warning(f"[ROLLOUT] Reward evaluation failed: {error}")
+                            eval_errors_this_batch += 1
+                            record_metric("main/continuous_rollouts/eval_error", 1, Reduce.SUM)
+
+                    # Build input_ids after rewards are assigned
+                    for i, episode in enumerate(episodes):
+                        input_ids[i, :max_req_tokens] = episode.request_tensor
+                        input_ids[i, max_req_tokens:] = episode.response_tensor
+
+                    t.step("reward_evaluation")
+
+                    # Episode dropout logic (aligned with GRPO reference implementation)
+                    # Drop entire batch if:
+                    # 1. Reward variance is too low (including all 0s and all 1s)
+                    # 2. Any response was truncated (didn't end with EOS)
+                    rewards = [e.reward for e in episodes]
+                    rewards_std = torch.std(torch.tensor(rewards))
+                    is_low_variance = rewards_std < variance_threshold
+
+                    num_truncated = sum(
+                        1 for e in episodes if e.stop_reason == "length"
+                    )
+                    is_truncated = num_truncated > 0
+
+                    # Record dropout metrics
+                    n = len(episodes)
+                    if enable_variance_dropout:
+                        record_metric(
+                            "main/continuous_rollouts/episodes_dropped/low_variance",
+                            n if is_low_variance else 0,
+                            Reduce.SUM,
+                        )
+
+                    if enable_truncation_dropout:
+                        record_metric(
+                            "main/continuous_rollouts/episodes_dropped/truncated",
+                            num_truncated,
+                            Reduce.SUM,
+                        )
+
+                    # Determine if we should drop this batch
+                    should_drop = (
+                        (enable_variance_dropout and is_low_variance) or
+                        (enable_truncation_dropout and is_truncated)
+                    )
+
                     record_metric(
-                        "main/continuous_rollouts/episodes_dropped/low_variance",
-                        n if is_low_variance else 0,
+                        "main/continuous_rollouts/episodes_dropped/total",
+                        n if should_drop else 0,
                         Reduce.SUM,
                     )
 
-                if enable_truncation_dropout:
+                    if should_drop:
+                        if is_low_variance:
+                            logger.debug(
+                                f"[DROPOUT] Dropping batch: low reward variance "
+                                f"(std={rewards_std:.4f} < {variance_threshold})"
+                            )
+                        if is_truncated:
+                            logger.debug(
+                                f"[DROPOUT] Dropping batch: {num_truncated}/{n} episodes truncated"
+                            )
+                        del input_ids, episodes
+                        continue
+
+                    # Circuit breaker: if ALL evaluations failed, something is wrong
+                    if eval_errors_this_batch == len(responses):
+                        consecutive_errors += 1
+                        logger.warning(
+                            f"[CIRCUIT BREAKER] All {len(responses)} evaluations failed. "
+                            f"Consecutive error batches: {consecutive_errors}/{max_consecutive_errors}"
+                        )
+                        if consecutive_errors >= max_consecutive_errors:
+                            raise RuntimeError(
+                                f"[ROLLOUT FAILURE] {consecutive_errors} consecutive batches with all evaluations failing. "
+                                f"Environment actor appears to be unresponsive. Check container health."
+                            )
+                    else:
+                        # Reset error counter on partial success
+                        consecutive_errors = 0
+
+                    # Timeout on reference model forward
+                    try:
+                        ref_logprobs = await asyncio.wait_for(
+                            ref_model.forward.route(input_ids, return_logprobs=True),
+                            timeout=60.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error("[ROLLOUT] Timeout waiting for ref_model.forward()")
+                        record_metric("main/continuous_rollouts/ref_model_timeout", 1, Reduce.SUM)
+                        continue
+
+                    t.step("reference_model_calculate_logprobs")
+
+                    if not isinstance(ref_logprobs, torch.Tensor):
+                        raise TypeError(
+                            f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
+                        )
+
+                    for i, episode in enumerate(episodes):
+                        episode.ref_logprobs = ref_logprobs[i]
+                    del ref_logprobs, input_ids
+
+                    advantages = await compute_advantages.compute.call_one(episodes)
+                    for episode, advantage in zip(episodes, advantages):
+                        episode.advantage = advantage
+                        await replay_buffer.add.call_one(episode)
+
+                        # Track token-based metrics (aligned with GRPO)
+                        prompt_tokens = episode.completion.prompt_ids.shape[0]
+                        response_tokens = episode.completion.token_ids.shape[0]
+
+                        record_metric("episode/avg_prompt_tokens", prompt_tokens, Reduce.MEAN)
+                        record_metric("episode/max_prompt_tokens", prompt_tokens, Reduce.MAX)
+                        record_metric("episode/min_prompt_tokens", prompt_tokens, Reduce.MIN)
+                        record_metric("episode/avg_response_tokens", response_tokens, Reduce.MEAN)
+                        record_metric("episode/max_response_tokens", response_tokens, Reduce.MAX)
+                        record_metric("episode/min_response_tokens", response_tokens, Reduce.MIN)
+                        record_metric("episode/avg_reward", episode.reward, Reduce.MEAN)
+
+                    rollout_count += 1
                     record_metric(
-                        "main/continuous_rollouts/episodes_dropped/truncated",
-                        num_truncated,
-                        Reduce.SUM,
+                        "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
                     )
+                    t.stop()
 
-                # Determine if we should drop this batch
-                should_drop = (
-                    (enable_variance_dropout and is_low_variance) or
-                    (enable_truncation_dropout and is_truncated)
-                )
-
-                record_metric(
-                    "main/continuous_rollouts/episodes_dropped/total",
-                    n if should_drop else 0,
-                    Reduce.SUM,
-                )
-
-                if should_drop:
-                    if is_low_variance:
-                        logger.debug(
-                            f"[DROPOUT] Dropping batch: low reward variance "
-                            f"(std={rewards_std:.4f} < {variance_threshold})"
-                        )
-                    if is_truncated:
-                        logger.debug(
-                            f"[DROPOUT] Dropping batch: {num_truncated}/{n} episodes truncated"
-                        )
-                    del input_ids, episodes
-                    continue
-
-                # Circuit breaker: if ALL evaluations failed, something is wrong
-                if eval_errors_this_batch == len(responses):
+                except Exception as e:
+                    # Catch any unexpected errors in rollout loop to prevent thread crash
+                    logger.error(f"[ROLLOUT] Unexpected error in rollout loop: {e}")
+                    record_metric("main/continuous_rollouts/unexpected_error", 1, Reduce.SUM)
                     consecutive_errors += 1
-                    logger.warning(
-                        f"[CIRCUIT BREAKER] All {len(responses)} evaluations failed. "
-                        f"Consecutive error batches: {consecutive_errors}/{max_consecutive_errors}"
-                    )
                     if consecutive_errors >= max_consecutive_errors:
                         raise RuntimeError(
-                            f"[ROLLOUT FAILURE] {consecutive_errors} consecutive batches with all evaluations failing. "
-                            f"Environment actor appears to be unresponsive. Check container health."
+                            f"[ROLLOUT FAILURE] {consecutive_errors} consecutive errors in rollout loop. "
+                            f"Last error: {e}"
                         )
-                else:
-                    # Reset error counter on partial success
-                    consecutive_errors = 0
-
-                # Timeout on reference model forward
-                try:
-                    ref_logprobs = await asyncio.wait_for(
-                        ref_model.forward.route(input_ids, return_logprobs=True),
-                        timeout=60.0,
-                    )
-                except asyncio.TimeoutError:
-                    logger.error("[ROLLOUT] Timeout waiting for ref_model.forward()")
-                    record_metric("main/continuous_rollouts/ref_model_timeout", 1, Reduce.SUM)
-                    continue
-
-                t.step("reference_model_calculate_logprobs")
-
-                if not isinstance(ref_logprobs, torch.Tensor):
-                    raise TypeError(
-                        f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
-                    )
-
-                for i, episode in enumerate(episodes):
-                    episode.ref_logprobs = ref_logprobs[i]
-                del ref_logprobs, input_ids
-
-                advantages = await compute_advantages.compute.call_one(episodes)
-                for episode, advantage in zip(episodes, advantages):
-                    episode.advantage = advantage
-                    await replay_buffer.add.call_one(episode)
-
-                    # Track token-based metrics (aligned with GRPO)
-                    prompt_tokens = episode.completion.prompt_ids.shape[0]
-                    response_tokens = episode.completion.token_ids.shape[0]
-
-                    record_metric("episode/avg_prompt_tokens", prompt_tokens, Reduce.MEAN)
-                    record_metric("episode/max_prompt_tokens", prompt_tokens, Reduce.MAX)
-                    record_metric("episode/min_prompt_tokens", prompt_tokens, Reduce.MIN)
-                    record_metric("episode/avg_response_tokens", response_tokens, Reduce.MEAN)
-                    record_metric("episode/max_response_tokens", response_tokens, Reduce.MAX)
-                    record_metric("episode/min_response_tokens", response_tokens, Reduce.MIN)
-                    record_metric("episode/avg_reward", episode.reward, Reduce.MEAN)
-
-                rollout_count += 1
-                record_metric(
-                    "main/continuous_rollouts/count_rollout_iterations", 1, Reduce.SUM
-                )
-                t.stop()
-
-            except Exception as e:
-                # Catch any unexpected errors in rollout loop to prevent thread crash
-                logger.error(f"[ROLLOUT] Unexpected error in rollout loop: {e}")
-                record_metric("main/continuous_rollouts/unexpected_error", 1, Reduce.SUM)
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    raise RuntimeError(
-                        f"[ROLLOUT FAILURE] {consecutive_errors} consecutive errors in rollout loop. "
-                        f"Last error: {e}"
-                    )
-                # Brief pause before retry
-                await asyncio.sleep(1.0)
+                    # Brief pause before retry
+                    await asyncio.sleep(1.0)
+        except Exception as e:
+            import traceback
+            logger.error(f"[ROLLOUT FATAL] continuous_rollouts() crashed with error: {e}")
+            logger.error(f"[ROLLOUT FATAL] Traceback:\n{traceback.format_exc()}")
+            raise
 
     async def continuous_training():
         training_step = 0
@@ -1269,10 +1257,23 @@ async def main(cfg: DictConfig):
     num_rollout_threads = cfg.get("rollout_threads", 1)
     print(f"Starting OpenEnv GRPO with {num_rollout_threads} rollout threads")
 
+    # Callback to immediately report rollout task failures
+    def rollout_task_done_callback(task):
+        try:
+            exc = task.exception()
+            if exc is not None:
+                import traceback
+                logger.error(f"[ROLLOUT TASK FAILED] Rollout task crashed: {exc}")
+                logger.error(f"[ROLLOUT TASK FAILED] Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}")
+        except asyncio.CancelledError:
+            pass  # Task was cancelled, not an error
+
     # Start rollout tasks first
-    rollout_tasks = [
-        asyncio.create_task(continuous_rollouts()) for _ in range(num_rollout_threads)
-    ]
+    rollout_tasks = []
+    for _ in range(num_rollout_threads):
+        task = asyncio.create_task(continuous_rollouts())
+        task.add_done_callback(rollout_task_done_callback)
+        rollout_tasks.append(task)
 
     # Start training immediately (no warmup)
     training_task = asyncio.create_task(continuous_training())

@@ -15,9 +15,9 @@ Usage:
     # In your YAML config:
     task:
       env_name: "julia"
-      build_action: !function apps.openenv.julia_utils_generic.build_julia_action
-      evaluate_response: !function apps.openenv.julia_utils_generic.evaluate_julia_response
-      transform_sample: !function apps.openenv.julia_utils_generic.transform_julia_sample
+      build_action: !function apps.openenv.julia_utils.build_julia_action
+      evaluate_response: !function apps.openenv.julia_utils.evaluate_julia_response
+      transform_sample: !function apps.openenv.julia_utils.transform_julia_sample
 """
 
 import re
