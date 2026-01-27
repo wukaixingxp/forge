@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
-import socket
 import traceback
 from typing import Any, Dict, Optional, Type
 
@@ -17,70 +16,15 @@ from monarch.actor import endpoint
 
 from forge.controller import ForgeActor
 from forge.observability.metrics import record_metric, Reduce
+from forge.actors.openenv_utils import (
+    find_available_port,
+    CONTAINER_ERROR_KEYWORDS,
+    HTTP_ERROR_KEYWORDS,
+    is_http_error,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-
-def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
-    """
-    Check if a port is already in use on the specified host.
-
-    Args:
-        port: Port number to check
-        host: Host address to check (default: 127.0.0.1)
-
-    Returns:
-        True if port is in use, False if available
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            # Try to bind to the port
-            s.bind((host, port))
-            return False  # Port is available
-        except OSError:
-            return True  # Port is in use
-
-
-def find_available_port(
-    preferred_port: int, min_port: int = 5000, max_attempts: int = 100
-) -> int:
-    """
-    Find an available port starting from preferred_port and decrementing.
-
-    Args:
-        preferred_port: The preferred port to use
-        min_port: Minimum port number to try (default: 5000, below this are often privileged)
-        max_attempts: Maximum number of ports to try (default: 100)
-
-    Returns:
-        An available port number
-
-    Raises:
-        RuntimeError: If no available port is found after max_attempts
-    """
-    port = preferred_port
-    attempts = 0
-
-    while attempts < max_attempts:
-        if port < min_port:
-            raise RuntimeError(
-                f"No available port found after trying {attempts} ports. "
-                f"Reached minimum port {min_port}."
-            )
-
-        if not is_port_in_use(port):
-            logger.info(f"Found available port: {port}")
-            return port
-
-        logger.debug(f"Port {port} is in use, trying {port - 1}")
-        port -= 1
-        attempts += 1
-
-    raise RuntimeError(
-        f"No available port found after trying {max_attempts} ports "
-        f"(from {preferred_port} down to {port})."
-    )
 
 
 class GenericOpenEnvActor(ForgeActor):
@@ -392,38 +336,16 @@ class GenericOpenEnvActor(ForgeActor):
             except Exception as e:
                 error_msg = str(e).lower()
                 # Check for ACTUAL container-related errors (not HTTP timeouts or code errors)
-                # Be specific to avoid false positives that trigger unnecessary container recreation
                 is_container_error = any(
-                    keyword in error_msg
-                    for keyword in [
-                        "no such container",
-                        "container not found",
-                        "container is not running",
-                        "container has stopped",
-                        "container exited",
-                        "exec session",
-                        "state improper",
-                        "oci runtime error",
-                        "docker daemon",
-                        "cannot connect to docker",
-                        "connection refused",  # Container is dead/not responding
-                    ]
+                    keyword in error_msg for keyword in CONTAINER_ERROR_KEYWORDS
                 )
 
                 # Exclude HTTP-level errors which don't require container recreation
-                is_http_error = any(
-                    keyword in error_msg
-                    for keyword in [
-                        "connection timeout",
-                        "read timeout",
-                        "http error",
-                        "status code",
-                    ]
-                )
+                http_error = is_http_error(str(e))
 
                 # Only recreate if it's a real container issue, not just HTTP timeout
                 if is_container_error and not (
-                    is_http_error and "connection timeout" in error_msg
+                    http_error and "connection timeout" in error_msg
                 ):
                     # ========== CONTAINER ERROR LOGGING ==========
                     # Log to training metrics
@@ -447,7 +369,7 @@ class GenericOpenEnvActor(ForgeActor):
                     print(f"Error Message: {str(e)}")
                     print(f"Error Message (lowercase): {error_msg}")
                     print(f"\nIs Container Error: {is_container_error}")
-                    print(f"Is HTTP Error: {is_http_error}")
+                    print(f"Is HTTP Error: {http_error}")
                     print("\nFull Traceback:")
                     print("-" * 80)
                     traceback.print_exc()
@@ -460,7 +382,7 @@ class GenericOpenEnvActor(ForgeActor):
                         f"  Error Type: {type(e).__name__}\n"
                         f"  Error Message: {str(e)}\n"
                         f"  Is Container Error: {is_container_error}\n"
-                        f"  Is HTTP Error: {is_http_error}"
+                        f"  Is HTTP Error: {http_error}"
                     )
 
                     if attempt < max_retries - 1:
@@ -522,7 +444,7 @@ class GenericOpenEnvActor(ForgeActor):
                     print(f"Error Message: {str(e)}")
                     print(f"Error Message (lowercase): {error_msg}")
                     print(f"\nIs Container Error: {is_container_error}")
-                    print(f"Is HTTP Error: {is_http_error}")
+                    print(f"Is HTTP Error: {http_error}")
                     print("-" * 80 + "\n")
 
                     logging.debug(
@@ -530,7 +452,7 @@ class GenericOpenEnvActor(ForgeActor):
                         f"  Error Type: {type(e).__name__}\n"
                         f"  Error Message: {str(e)}\n"
                         f"  Is Container Error: {is_container_error}\n"
-                        f"  Is HTTP Error: {is_http_error}"
+                        f"  Is HTTP Error: {http_error}"
                     )
 
                     raise

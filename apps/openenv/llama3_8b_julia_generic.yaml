@@ -69,19 +69,18 @@ dataset:
 # GenericEnvClient handles everything else automatically
 openenv_config:
   docker_image: "julia-env:latest"  # Just specify the image, no env_class needed
+  env_name: "julia"                 # Environment name for logging paths
   container_timeout_s: 180.0
   container_memory_gb: 1024
   port: 8000
   num_env_actors: 2              # Multiple actors for circuit breaker isolation
   num_containers: 2              # 1 container per actor (2 total)
   num_connections: 12            # Connections per container (24 total across 2 actors)
-  # request_timeout_s should be > JULIA_EXECUTION_TIMEOUT to allow recovery
-  request_timeout_s: 20.0
-  julia_max_workers: 32  # Maximum number of workers to use for parallelization
+  request_timeout_s: 20.0        # Should be > JULIA_EXECUTION_TIMEOUT to allow recovery
   env_vars:
-    JULIAUP_OFFLINE: "1"  # Disable juliaup version checks (no internet on cluster)
-    JULIA_EXECUTION_TIMEOUT: "15"  # Julia-side timeout (must be < request_timeout_s)
-    JULIA_MAX_WORKERS: "16"  # Number of concurrent Julia worker processes
+    JULIAUP_OFFLINE: "1"            # Disable juliaup version checks (no internet on cluster)
+    JULIA_EXECUTION_TIMEOUT: "15"   # Julia-side timeout (must be < request_timeout_s)
+    JULIA_MAX_WORKERS: "32"         # Number of concurrent Julia worker processes
 
 # Policy configuration
 policy:
@@ -175,7 +174,7 @@ ref_model:
     expert_parallel_degree: 1
   checkpoint:
     enable: true
-    initial_load_path: ${model}
+    initial_load_path: hf://${model}
     initial_load_in_hf: true
 
 # All resource allocations

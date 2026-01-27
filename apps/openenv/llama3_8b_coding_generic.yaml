@@ -64,6 +64,7 @@ dataset:
 # GenericEnvClient handles everything else automatically
 openenv_config:
   docker_image: "coding-env:latest"  # Just specify the image, no env_class needed
+  env_name: "coding"                 # Environment name for logging paths
   container_timeout_s: 180.0
   container_memory_gb: 128
   port: 8000

@@ -10,7 +10,9 @@ Generic OpenEnv GRPO Training Script using GenericEnvClient.
 This version uses GenericEnvClient and GenericAction to work with ANY
 OpenEnv environment without requiring environment-specific packages.
 
-Usage: python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
+Usage:
+    python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_julia_generic.yaml
+    python -m apps.openenv.main_generic --config apps/openenv/llama3_8b_coding_generic.yaml
 """
 
 from __future__ import annotations
@@ -50,7 +52,8 @@ import torchstore as ts
 import yaml
 from datasets import load_dataset
 from forge.actors.generator import Generator
-from forge.actors.generic_openenv_client import GenericOpenEnvClientActor, find_available_port
+from forge.actors.generic_openenv_client import GenericOpenEnvClientActor
+from forge.actors.openenv_utils import find_available_port
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import TitanTrainer
@@ -687,15 +690,8 @@ async def main(cfg: DictConfig):
     if "NUM_WORKER" not in env_vars:
         env_vars["NUM_WORKER"] = str(openenv_config.get("num_worker", 4))
 
-    # Julia-specific env vars
-    env_name = task_config.get("env_name", "generic")
-    if env_name == "julia":
-        if "JULIA_MAX_WORKERS" not in env_vars:
-            env_vars["JULIA_MAX_WORKERS"] = str(
-                openenv_config.get("julia_max_workers", 16)
-            )
-        if "JULIA_EXECUTION_TIMEOUT" not in env_vars:
-            env_vars["JULIA_EXECUTION_TIMEOUT"] = str(int(request_timeout_s))
+    # Get env_name for actor mesh naming and logging paths
+    env_name = openenv_config.get("env_name", task_config.get("env_name", "generic"))
 
     logger.debug(
         f"main Initializing GenericOpenEnvClientActor with image={docker_image}..."
@@ -730,6 +726,7 @@ async def main(cfg: DictConfig):
             **cfg.actors.get(f"{env_name}_env", cfg.actors.get("env", {}))
         ).as_actor(
             docker_image=docker_image,
+            env_name=env_name,
             env_vars=actor_env_vars,
             container_timeout_s=container_timeout_s,
             request_timeout_s=request_timeout_s,
