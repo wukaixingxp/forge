@@ -28,55 +28,6 @@ from openenv import GenericAction
 from forge.observability.metrics import record_metric, Reduce
 
 
-def is_gibberish_output(response: str, max_length: int = 5000) -> tuple[bool, str]:
-    """
-    Detect if model output is gibberish/degraded (vLLM cache corruption symptom).
-
-    Args:
-        response: Model's generated text
-        max_length: Maximum reasonable response length in characters
-
-    Returns:
-        Tuple of (is_gibberish: bool, reason: str)
-    """
-    # Check 1: Excessive length
-    if len(response) > max_length:
-        return True, f"Response too long: {len(response)} chars (max: {max_length})"
-
-    # Check 2: Too many non-ASCII characters
-    non_ascii_count = sum(1 for c in response if ord(c) > 127)
-    non_ascii_ratio = non_ascii_count / len(response) if response else 0
-    if non_ascii_ratio > 0.3:
-        return True, f"Too many non-ASCII chars: {non_ascii_ratio:.1%}"
-
-    # Check 3: Excessive repetition
-    if len(response) > 100:
-        sample_size = min(50, len(response) - 20)
-        for i in range(0, sample_size, 10):
-            if i + 20 <= len(response):
-                window = response[i:i+20]
-                count = response.count(window)
-                if count >= 3:
-                    return True, f"Excessive repetition detected: '{window[:20]}...' x{count}"
-
-    # Check 4: No valid code markers
-    has_code_markers = (
-        '```python' in response.lower() or
-        'def ' in response or
-        'return ' in response
-    )
-    if not has_code_markers and len(response) > 100:
-        return True, "No Python code markers found in long response"
-
-    # Check 5: Excessive special characters
-    special_chars = sum(1 for c in response if not c.isalnum() and not c.isspace() and c not in '.,;:!?()[]{}"\'-_=')
-    special_ratio = special_chars / len(response) if response else 0
-    if special_ratio > 0.4:
-        return True, f"Too many special chars: {special_ratio:.1%}"
-
-    return False, ""
-
-
 def get_python_system_prompt() -> str:
     """Get system prompt for Python coding tasks."""
     return """You are an expert Python programmer.
@@ -185,22 +136,6 @@ def evaluate_python_response(result, response: str, sample: Dict[str, Any]) -> f
         Reward score: 1.0 if all tests pass (exit_code == 0), 0.0 otherwise
     """
     try:
-        # First check if output is gibberish (vLLM cache corruption)
-        is_gibberish, reason = is_gibberish_output(response, max_length=5000)
-        if is_gibberish:
-            print("=" * 80)
-            print("GIBBERISH OUTPUT DETECTED (SKIPPING EVALUATION)")
-            print(f"Reason: {reason}")
-            print(f"Response length: {len(response)} chars")
-            print("First 500 chars of response:")
-            print("-" * 80)
-            print(response[:500])
-            print("-" * 80)
-            print("⚠ This suggests vLLM KV cache corruption - cache reset recommended")
-            print("=" * 80)
-            record_metric("reward/python/gibberish_outputs", 1, Reduce.SUM)
-            return 0.0
-
         print("=" * 80)
         print("RAW RESPONSE FROM MODEL:")
         print("-" * 80)

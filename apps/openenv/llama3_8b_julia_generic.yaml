@@ -7,7 +7,7 @@ group_size: 8
 batch_size: 2
 max_req_tokens: 1024
 max_res_tokens: 1024
-model: "/home/kaiwu/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
+model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1
 compile: true # Enable torch.compile for trainer/ref_model, and CUDA graphs for vLLM
 
@@ -15,13 +15,9 @@ compile: true # Enable torch.compile for trainer/ref_model, and CUDA graphs for 
 grpo:
   loss_type: grpo             # Options: "grpo" or "dapo" (default: dapo)
   # Common parameters
-  clip_eps_low: 0.2           # Lower clipping bound (alias: clip_low)
-  clip_eps_high: 0.28         # Upper clipping bound (alias: clip_high)
   agg_type: fixed_horizon     # Aggregation: "fixed_horizon" (GRPO) or "token_mean" (DAPO)
   # GRPO-specific parameters
   beta: 0.1                   # KL penalty coefficient (only used when loss_type: grpo)
-  # DAPO-specific parameters
-  dual_clip_c: 3.0            # Dual-clip constant (only used when loss_type: dapo)
 
 # Episode dropout configuration (aligned with GRPO reference)
 episode_dropout:
@@ -89,7 +85,7 @@ openenv_config:
 
 # Policy configuration
 policy:
-  prefetch_weights_to_shm: true
+  prefetch_weights_to_shm: false  # GPU Direct RDMA is now fixed with proper timeout
   engine_args:
     model: ${model}
     tensor_parallel_size: 1
@@ -115,7 +111,7 @@ trainer:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: ${model}
+    hf_assets_path: hf://${model}
   optimizer:
     name: AdamW
     lr: 5e-6  # Reduced from 1e-5 for training stability
@@ -143,7 +139,7 @@ trainer:
   checkpoint:
     enable: true
     folder: "checkpoint_llama3_8b_julia_generic"
-    initial_load_path: ${model}
+    initial_load_path: hf://${model}  # The path to load the initial checkpoint from. Ignored if `folder` exists.
     initial_load_in_hf: true
     last_save_in_hf: true
     interval: 150
@@ -163,7 +159,7 @@ ref_model:
   model:
     name: llama3
     flavor: 8B
-    hf_assets_path: ${model}
+    hf_assets_path: hf://${model}
   training:
     seq_len: ${trainer.training.seq_len}
     dtype: bfloat16
