@@ -687,6 +687,22 @@ async def main(cfg: DictConfig):
     mlogger = await get_or_create_metric_logger(process_name="Controller")
     await mlogger.init_backends.call_one(metric_logging_cfg)
 
+    # ---- Setup loss function ---- #
+    loss_fn = make_loss(cfg)
+
+    # Fail-fast: Check loss/ref_model compatibility before spawning actors
+    uses_ref_model = cfg.get("services", {}).get("ref_model") is not None
+    if uses_ref_model and not isinstance(loss_fn, GRPOLoss):
+        logger.warning(
+            f"ref_model is configured but {type(loss_fn).__name__} does not use ref_logprobs. "
+            "Consider removing the ref_model service config to save GPU resources."
+        )
+    if isinstance(loss_fn, GRPOLoss) and loss_fn.beta > 0 and not uses_ref_model:
+        raise ValueError(
+            f"GRPOLoss with beta={loss_fn.beta} requires ref_logprobs, but ref_model is not configured. "
+            "Either add ref_model to services config or set beta=0."
+        )
+
     # Setup OpenEnvActor - works with ANY OpenEnv Docker image
     openenv_config = cfg.get("openenv_config", {})
     docker_image = openenv_config.get("docker_image")
@@ -755,6 +771,9 @@ async def main(cfg: DictConfig):
     )
 
     # Create all other actors
+    async def noop():
+        return None
+
     (
         dataloader,
         policy,
@@ -775,13 +794,17 @@ async def main(cfg: DictConfig):
         Policy.options(**cfg.services.policy).as_service(**cfg.policy),
         TitanTrainer.options(**cfg.actors.trainer).as_actor(
             **cfg.trainer,
-            loss=make_loss(cfg),
+            loss=loss_fn,
         ),
         ReplayBuffer.options(**cfg.actors.replay_buffer).as_actor(
             **cfg.replay_buffer, collate=collate
         ),
         ComputeAdvantages.options(**cfg.actors.compute_advantages).as_actor(),
-        ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model),
+        (
+            ReferenceModel.options(**cfg.services.ref_model).as_service(**cfg.ref_model)
+            if uses_ref_model
+            else noop()
+        ),
         GenericRewardActor.options(**cfg.services.reward_actor).as_service(
             env_actors=env_actors,
             build_action_fn=build_action_fn,
@@ -1046,27 +1069,30 @@ async def main(cfg: DictConfig):
                         # Reset error counter on partial success
                         consecutive_errors = 0
 
-                    # Timeout on reference model forward
-                    try:
-                        ref_logprobs = await asyncio.wait_for(
-                            ref_model.forward.route(input_ids, return_logprobs=True),
-                            timeout=60.0,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.error("[ROLLOUT] Timeout waiting for ref_model.forward()")
-                        record_metric("main/continuous_rollouts/ref_model_timeout", 1, Reduce.SUM)
-                        continue
+                    # Compute ref_logprobs only if ref_model is configured
+                    if ref_model is not None:
+                        try:
+                            ref_logprobs = await asyncio.wait_for(
+                                ref_model.forward.route(input_ids, return_logprobs=True),
+                                timeout=60.0,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.error("[ROLLOUT] Timeout waiting for ref_model.forward()")
+                            record_metric("main/continuous_rollouts/ref_model_timeout", 1, Reduce.SUM)
+                            continue
 
-                    t.step("reference_model_calculate_logprobs")
+                        t.step("reference_model_calculate_logprobs")
 
-                    if not isinstance(ref_logprobs, torch.Tensor):
-                        raise TypeError(
-                            f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
-                        )
+                        if not isinstance(ref_logprobs, torch.Tensor):
+                            raise TypeError(
+                                f"ref_model.forward.route() returned {type(ref_logprobs)} instead of torch.Tensor"
+                            )
 
-                    for i, episode in enumerate(episodes):
-                        episode.ref_logprobs = ref_logprobs[i]
-                    del ref_logprobs, input_ids
+                        for i, episode in enumerate(episodes):
+                            episode.ref_logprobs = ref_logprobs[i]
+                        del ref_logprobs
+
+                    del input_ids
 
                     advantages = await compute_advantages.compute.call_one(episodes)
                     for episode, advantage in zip(episodes, advantages):

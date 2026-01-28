@@ -11,13 +11,15 @@ model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
 off_by_n: 1
 compile: true # Enable torch.compile for trainer/ref_model, and CUDA graphs for vLLM
 
-# GRPO/DAPO loss configuration - tuned for stability
+# GRPO/DAPO loss configuration - using DAPO (recommended, no ref_model KL needed)
 grpo:
-  loss_type: grpo             # Options: "grpo" or "dapo" (default: dapo)
+  loss_type: dapo             # Options: "grpo" or "dapo" (default: dapo)
   # Common parameters
-  agg_type: fixed_horizon     # Aggregation: "fixed_horizon" (GRPO) or "token_mean" (DAPO)
-  # GRPO-specific parameters
-  beta: 0.1                   # KL penalty coefficient (only used when loss_type: grpo)
+  agg_type: token_mean        # Aggregation: "fixed_horizon" (GRPO) or "token_mean" (DAPO)
+  # DAPO-specific parameters
+  clip_low: 0.2               # Lower clip bound (ratio clamped to min 1 - clip_low = 0.8)
+  clip_high: 0.28             # Upper clip bound (ratio clamped to max 1 + clip_high = 1.28)
+  dual_clip_c: 3.0            # Dual-clip cap constant for negative advantages
 
 # Episode dropout configuration (aligned with GRPO reference)
 episode_dropout:
@@ -153,7 +155,8 @@ replay_buffer:
   max_policy_age: ${off_by_n}
   dp_size: ${trainer.parallelism.data_parallel_shard_degree}
 
-# Reference model configuration
+# Reference model configuration (only used when services.ref_model is enabled)
+# Kept for documentation - uncomment services.ref_model to enable for GRPO
 ref_model:
   model:
     name: llama3
@@ -184,11 +187,13 @@ services:
     num_replicas: 1
     mesh_name: policy
     with_gpus: true
-  ref_model:
-    procs: 1
-    num_replicas: 1
-    mesh_name: ref_model
-    with_gpus: true
+  # ref_model: Only needed for GRPO with beta > 0 (KL penalty)
+  # Commented out for DAPO to save a GPU
+  # ref_model:
+  #   procs: 1
+  #   num_replicas: 1
+  #   mesh_name: ref_model
+  #   with_gpus: true
   reward_actor:
     procs: 1
     num_replicas: 1
