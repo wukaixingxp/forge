@@ -204,7 +204,7 @@ class ContainerManager:
         for i in range(num_containers):
             try:
                 container_port = find_available_port(self.config.port - i)
-                logger.info(f"Creating container {i+1}/{num_containers} on port {container_port}")
+                logger.info(f"Creating container {i + 1}/{num_containers} on port {container_port}")
 
                 env_vars = self._build_container_env_vars(container_port)
                 volumes = self._build_volumes()
@@ -223,10 +223,10 @@ class ContainerManager:
                 self.providers.append(provider)
                 self.container_urls.append(base_url)
 
-                logger.info(f"Container {i+1}/{num_containers} ready at {base_url}")
+                logger.info(f"Container {i + 1}/{num_containers} ready at {base_url}")
 
             except Exception as e:
-                logger.error(f"Failed to create container {i+1}: {e}")
+                logger.error(f"Failed to create container {i + 1}: {e}")
                 self.stop_all()
                 raise
 
@@ -312,7 +312,7 @@ class ConnectionPool:
                 container_idx = i % num_containers
                 base_url = container_urls[container_idx]
 
-                logger.debug(f"Creating sync connection {i+1}/{num_connections} → container {container_idx}")
+                logger.debug(f"Creating sync connection {i + 1}/{num_connections} → container {container_idx}")
 
                 client = GenericEnvClient(
                     base_url=base_url,
@@ -325,7 +325,7 @@ class ConnectionPool:
                 self.client_available.append(True)
 
             except Exception as e:
-                logger.error(f"Failed to create connection {i+1}: {e}")
+                logger.error(f"Failed to create connection {i + 1}: {e}")
                 self.close_all_sync()
                 raise
 
@@ -365,11 +365,11 @@ class ConnectionPool:
 
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError as timeout_err:
                     raise TimeoutError(
                         f"No client available after {timeout}s. "
                         f"All {len(self.clients)} clients busy."
-                    )
+                    ) from timeout_err
 
     async def release(self, client_idx: int):
         """Release a client back to the pool."""

@@ -174,13 +174,13 @@ def evaluate_python_response(result, response: str, sample: Dict[str, Any]) -> f
         print(f"  Exit Code: {exit_code}")
 
         if stdout:
-            print(f"  Stdout (first 500 chars):")
+            print("  Stdout (first 500 chars):")
             print("-" * 40)
             print(stdout[:500])
             print("-" * 40)
 
         if stderr:
-            print(f"  Stderr (first 500 chars):")
+            print("  Stderr (first 500 chars):")
             print("-" * 40)
             print(stderr[:500])
             print("-" * 40)

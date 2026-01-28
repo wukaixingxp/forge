@@ -76,7 +76,7 @@ class Episode:
             "completion": self.completion,
         }
 
-        if self.reward_breakdown is not None and "reward_breakdown" not in exclude:
+        if self.reward_breakdown is not None and (exclude is None or "reward_breakdown" not in exclude):
             result.update(self.reward_breakdown)
 
         if exclude:

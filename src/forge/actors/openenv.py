@@ -55,6 +55,18 @@ class OpenEnvActor(ForgeActor):
     This actor manages WebSocket connections to Docker containers,
     with connection pooling for high concurrency.
 
+    Args:
+        docker_image: Docker image name (e.g., "julia-env:latest")
+        env_name: Environment name for logging (e.g., "julia", "python")
+        env_vars: Environment variables to pass to containers
+        container_timeout_s: Timeout for container startup
+        request_timeout_s: Timeout for individual requests
+        port: Starting port for containers
+        container_memory_gb: Memory limit per container in GB
+        enable_zombie_cleanup: Whether to enable zombie process cleanup
+        num_connections: Total WebSocket connections to create
+        num_containers: Number of Docker containers
+
     Usage:
         >>> actor = OpenEnvActor(
         ...     docker_image="julia-env:latest",
@@ -81,20 +93,6 @@ class OpenEnvActor(ForgeActor):
         num_connections: int = 1,
         num_containers: int = 1,
     ):
-        """Initialize the generic OpenEnv actor.
-
-        Args:
-            docker_image: Docker image name (e.g., "julia-env:latest")
-            env_name: Environment name for logging (e.g., "julia", "python")
-            env_vars: Environment variables to pass to containers
-            container_timeout_s: Timeout for container startup
-            request_timeout_s: Timeout for individual requests
-            port: Starting port for containers
-            container_memory_gb: Memory limit per container in GB
-            enable_zombie_cleanup: Whether to enable zombie process cleanup
-            num_connections: Total WebSocket connections to create
-            num_containers: Number of Docker containers
-        """
         self.num_connections = num_connections
         self.num_containers = num_containers
         self.request_timeout_s = request_timeout_s
@@ -141,9 +139,12 @@ class OpenEnvActor(ForgeActor):
     @endpoint
     async def recreate(self):
         """Resets the environment to a clean state."""
+        import asyncio
+
         if not self.client:
             raise RuntimeError("Client not initialized. Call setup() first.")
-        await self.client.reset()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(self._pool._executor, self.client.reset)
 
     @endpoint
     async def execute(self, action: Dict[str, Any]) -> "StepResult[Dict[str, Any]]":

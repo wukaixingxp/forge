@@ -53,7 +53,7 @@ import yaml
 from datasets import load_dataset
 from forge.actors.generator import Generator
 from forge.actors.openenv import OpenEnvActor
-from forge.actors.openenv_utils import find_available_port
+# find_available_port is used by OpenEnvActor internally
 from forge.actors.reference_model import ReferenceModel
 from forge.actors.replay_buffer import ReplayBuffer
 from forge.actors.trainer import TitanTrainer
@@ -68,7 +68,7 @@ from forge.types import LauncherConfig, ProvisionerConfig, TrainBatch
 from forge.util.checkpoint import drop_weights
 from forge.util.config import parse
 from monarch.actor import endpoint
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 
@@ -304,7 +304,10 @@ class GenericRewardActor(ForgeActor):
             f"GenericRewardActor.setup Timeout set to {self.evaluation_timeout_s}s"
         )
         logger.debug(f"GenericRewardActor.setup Using {num_actors} env_actors for parallel evaluation")
-        logger.debug(f"GenericRewardActor.setup Circuit breaker: threshold={self.circuit_breaker_threshold}, window={self.circuit_breaker_window_s}s")
+        logger.debug(
+            f"GenericRewardActor.setup Circuit breaker: threshold={self.circuit_breaker_threshold}, "
+            f"window={self.circuit_breaker_window_s}s"
+        )
         logger.debug("GenericRewardActor.setup Setup complete!")
 
     def _get_healthy_actor_idx(self) -> int:
@@ -771,7 +774,7 @@ async def main(cfg: DictConfig):
         actor_port = base_port - (i * num_containers_per_actor * 2)
 
         logger.debug(
-            f"Creating env_actor {i+1}/{num_env_actors} starting at port {actor_port}"
+            f"Creating env_actor {i + 1}/{num_env_actors} starting at port {actor_port}"
         )
 
         env_actor = await OpenEnvActor.options(
@@ -930,7 +933,7 @@ async def main(cfg: DictConfig):
                             policy.generate.route(prompt),
                             timeout=rollout_timeout_s,
                         )
-                    except asyncio.TimeoutError:
+                    except asyncio.TimeoutError as timeout_err:
                         logger.error(
                             f"[ROLLOUT] Timeout after {rollout_timeout_s}s waiting for policy.generate(). "
                             f"Generator may be stuck during weight update."
@@ -941,7 +944,7 @@ async def main(cfg: DictConfig):
                             raise RuntimeError(
                                 f"[ROLLOUT FAILURE] {consecutive_errors} consecutive rollout errors. "
                                 f"Generator appears to be unresponsive."
-                            )
+                            ) from timeout_err
                         continue
 
                     t.step("policy_generation")
@@ -994,18 +997,22 @@ async def main(cfg: DictConfig):
                         episodes.append(episode)
 
                     # Parallel reward evaluation using asyncio.gather
-                    async def evaluate_single(idx, episode, response):
+                    async def evaluate_single(
+                        idx, episode, response, *, _prompt=prompt, _target=target
+                    ):
                         try:
                             reward = await reward_actor.evaluate_response.route(
-                                prompt=prompt, response=response.text, target=target
+                                prompt=_prompt, response=response.text, target=_target
                             )
                             return idx, reward, None
-                        except Exception as e:
-                            return idx, 0.0, e
+                        except Exception as eval_exc:
+                            return idx, 0.0, eval_exc
 
                     eval_tasks = [
                         evaluate_single(i, ep, resp)
-                        for i, (ep, resp) in enumerate(zip(episodes, responses))
+                        for i, (ep, resp) in enumerate(
+                            zip(episodes, responses, strict=True)
+                        )
                     ]
                     eval_results = await asyncio.gather(*eval_tasks)
 
@@ -1125,7 +1132,7 @@ async def main(cfg: DictConfig):
                     del input_ids
 
                     advantages = await compute_advantages.compute.call_one(episodes)
-                    for episode, advantage in zip(episodes, advantages):
+                    for episode, advantage in zip(episodes, advantages, strict=True):
                         episode.advantage = advantage
                         await replay_buffer.add.call_one(episode)
 
@@ -1147,16 +1154,16 @@ async def main(cfg: DictConfig):
                     )
                     t.stop()
 
-                except Exception as e:
+                except Exception as rollout_err:
                     # Catch any unexpected errors in rollout loop to prevent thread crash
-                    logger.error(f"[ROLLOUT] Unexpected error in rollout loop: {e}")
+                    logger.error(f"[ROLLOUT] Unexpected error in rollout loop: {rollout_err}")
                     record_metric("main/continuous_rollouts/unexpected_error", 1, Reduce.SUM)
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive_errors:
                         raise RuntimeError(
                             f"[ROLLOUT FAILURE] {consecutive_errors} consecutive errors in rollout loop. "
-                            f"Last error: {e}"
-                        )
+                            f"Last error: {rollout_err}"
+                        ) from rollout_err
                     # Brief pause before retry
                     await asyncio.sleep(1.0)
         except Exception as e:
@@ -1343,7 +1350,10 @@ async def main(cfg: DictConfig):
             if exc is not None:
                 import traceback
                 logger.error(f"[ROLLOUT TASK FAILED] Rollout task crashed: {exc}")
-                logger.error(f"[ROLLOUT TASK FAILED] Traceback:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}")
+                tb_str = "".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                )
+                logger.error(f"[ROLLOUT TASK FAILED] Traceback:\n{tb_str}")
         except asyncio.CancelledError:
             pass  # Task was cancelled, not an error
 
@@ -1395,9 +1405,9 @@ async def main(cfg: DictConfig):
         for i, env_actor in enumerate(env_actors):
             try:
                 await env_actor.teardown.call_one()
-                print(f"Environment Docker container {i+1}/{len(env_actors)} stopped successfully")
+                print(f"Environment Docker container {i + 1}/{len(env_actors)} stopped successfully")
             except Exception as teardown_error:
-                print(f"Warning: Error during environment teardown {i+1}: {teardown_error}")
+                print(f"Warning: Error during environment teardown {i + 1}: {teardown_error}")
 
         await shutdown()
 
