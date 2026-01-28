@@ -80,7 +80,7 @@ openenv_config:
   env_vars:
     JULIAUP_OFFLINE: "1"            # Disable juliaup version checks (no internet on cluster)
     JULIA_EXECUTION_TIMEOUT: "15"   # Julia-side timeout (must be < request_timeout_s)
-    JULIA_MAX_WORKERS: "32"         # Number of concurrent Julia worker processes
+    JULIA_MAX_WORKERS: "8"          # Reduced to avoid resource exhaustion with multiple containers
 
 # Policy configuration
 policy:

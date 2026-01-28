@@ -33,7 +33,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from monarch.actor import endpoint
 
 if TYPE_CHECKING:
-    from openenv import GenericEnvClient, GenericAction
+    from openenv import GenericEnvClient
     from openenv.core.client_types import StepResult
 
 from forge.controller import ForgeActor
@@ -120,16 +120,16 @@ class OpenEnvActor(ForgeActor):
 
     @endpoint
     async def setup(self):
-        """Initialize containers and create connection pool."""
+        """Initialize containers and create sync connection pool with thread pool executor."""
         logger.info(
-            f"Setting up: {self.num_connections} connections "
-            f"across {self.num_containers} containers"
+            f"Setting up: {self.num_connections} sync connections "
+            f"across {self.num_containers} containers (with thread pool)"
         )
 
         # Create containers
         container_urls = self._container_manager.create_containers(self.num_containers)
 
-        # Initialize and create connections
+        # Initialize thread pool and create sync connections
         await self._pool.initialize()
         self._pool.create_connections(container_urls, self.num_connections)
 
@@ -143,7 +143,7 @@ class OpenEnvActor(ForgeActor):
         """Resets the environment to a clean state."""
         if not self.client:
             raise RuntimeError("Client not initialized. Call setup() first.")
-        self.client.reset()
+        await self.client.reset()
 
     @endpoint
     async def execute(self, action: Dict[str, Any]) -> "StepResult[Dict[str, Any]]":
@@ -168,12 +168,16 @@ class OpenEnvActor(ForgeActor):
     async def _execute_with_retry(
         self, client_idx: int, client: "GenericEnvClient", action: Dict[str, Any]
     ) -> "StepResult[Dict[str, Any]]":
-        """Execute action with retry logic for connection errors."""
+        """Execute action with retry logic for connection errors.
+
+        Uses thread pool to run sync WebSocket calls without blocking event loop.
+        """
         max_retries = 3
 
         for attempt in range(max_retries):
             try:
-                result = client.step(action)
+                # Execute in thread pool - doesn't block event loop
+                result = await self._pool.execute_step(client_idx, action)
                 record_metric("pool/execute_success", 1, Reduce.SUM)
                 return result
 
@@ -185,7 +189,7 @@ class OpenEnvActor(ForgeActor):
                     logger.error(f"{error_type} error on client {client_idx}: {e}")
 
                     try:
-                        client = self._pool.reconnect(
+                        client = await self._pool.reconnect(
                             client_idx, self._container_manager.container_urls
                         )
                         record_metric("pool/reconnect_success", 1, Reduce.SUM)
@@ -205,15 +209,19 @@ class OpenEnvActor(ForgeActor):
     @endpoint
     async def health_check(self) -> Dict[str, Any]:
         """Check if the environment is healthy."""
+        import asyncio
+
         if not self._pool.clients:
             return {"healthy": False, "error": "Pool not initialized"}
 
         healthy_count = 0
         pool_status = []
+        loop = asyncio.get_event_loop()
 
         for i, client in enumerate(self._pool.clients):
             try:
-                client.state()
+                # Run sync state() in thread pool
+                await loop.run_in_executor(self._pool._executor, client.state)
                 pool_status.append({"index": i, "healthy": True})
                 healthy_count += 1
             except Exception as e:
@@ -237,15 +245,22 @@ class OpenEnvActor(ForgeActor):
     @endpoint
     async def get_state(self) -> Dict[str, Any]:
         """Get current environment state."""
+        import asyncio
+
         if not self._pool.clients:
             raise RuntimeError("Pool not initialized. Call setup() first.")
-        return self._pool.clients[0].state()
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self._pool._executor,
+            self._pool.clients[0].state
+        )
 
     @endpoint
     async def teardown(self):
         """Clean up all connections and containers."""
         logger.debug("Tearing down...")
-        self._pool.close_all()
+        await self._pool.close_all()
         self._container_manager.stop_all()
         self.client = None
         logger.debug("Teardown complete.")
@@ -259,7 +274,7 @@ class OpenEnvActor(ForgeActor):
 
         try:
             # Cleanup existing
-            self._pool.close_all()
+            await self._pool.close_all()
             self._container_manager.stop_all()
             await asyncio.sleep(2)
 
@@ -271,7 +286,7 @@ class OpenEnvActor(ForgeActor):
             if self._pool.clients:
                 self.client = self._pool.clients[0]
 
-            logger.info(f"Restart complete: {len(self._pool.clients)} connections")
+            logger.info(f"Restart complete: {len(self._pool.clients)} sync connections")
             return {
                 "success": True,
                 "num_containers": len(container_urls),

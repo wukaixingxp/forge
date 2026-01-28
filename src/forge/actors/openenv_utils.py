@@ -239,18 +239,16 @@ class ContainerManager:
         for i, provider in enumerate(self.providers):
             try:
                 if hasattr(provider, 'container_id') and provider.container_id:
+                    # Use docker kill directly for faster shutdown
+                    # docker stop can hang on stuck processes
                     try:
-                        subprocess.run(
-                            ['docker', 'stop', provider.container_id],
-                            timeout=10,
-                            capture_output=True
-                        )
-                    except subprocess.TimeoutExpired:
                         subprocess.run(
                             ['docker', 'kill', provider.container_id],
                             timeout=5,
                             capture_output=True
                         )
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"docker kill timed out for container {i}")
                 else:
                     provider.stop_container()
                 logger.debug(f"Stopped container {i}")
@@ -262,7 +260,11 @@ class ContainerManager:
 
 
 class ConnectionPool:
-    """Manages a pool of WebSocket connections to OpenEnv containers."""
+    """Manages a pool of sync WebSocket connections to OpenEnv containers.
+
+    Uses thread pool execution to avoid blocking the asyncio event loop
+    while maintaining simple sync WebSocket clients.
+    """
 
     def __init__(self, request_timeout_s: float = 120.0):
         self.request_timeout_s = request_timeout_s
@@ -270,15 +272,20 @@ class ConnectionPool:
         self.client_available = []
         self._lock = None
         self._condition = None
+        self._executor = None
 
     async def initialize(self):
-        """Initialize async primitives."""
+        """Initialize async primitives and thread pool."""
         import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
         self._lock = asyncio.Lock()
         self._condition = asyncio.Condition(self._lock)
+        # Thread pool for running sync WebSocket calls without blocking event loop
+        self._executor = ThreadPoolExecutor(max_workers=64, thread_name_prefix="ws_pool")
 
     def create_connections(self, container_urls: list, num_connections: int):
-        """Create WebSocket connections distributed across containers.
+        """Create sync WebSocket connections distributed across containers.
 
         Args:
             container_urls: List of container base URLs.
@@ -295,14 +302,13 @@ class ConnectionPool:
                 container_idx = i % num_containers
                 base_url = container_urls[container_idx]
 
-                logger.debug(f"Creating connection {i+1}/{num_connections} → container {container_idx}")
+                logger.debug(f"Creating sync connection {i+1}/{num_connections} → container {container_idx}")
 
                 client = GenericEnvClient(
                     base_url=base_url,
                     connect_timeout_s=10.0,
                     message_timeout_s=self.request_timeout_s,
                 )
-                client.connect()
                 client.reset()
 
                 self.clients.append(client)
@@ -310,10 +316,10 @@ class ConnectionPool:
 
             except Exception as e:
                 logger.error(f"Failed to create connection {i+1}: {e}")
-                self.close_all()
+                self.close_all_sync()
                 raise
 
-        logger.info(f"Connection pool ready: {len(self.clients)} connections")
+        logger.info(f"Connection pool ready: {len(self.clients)} sync connections")
 
     async def acquire(self, timeout: float = 30.0) -> tuple:
         """Acquire an available client from the pool.
@@ -362,7 +368,7 @@ class ConnectionPool:
             logger.debug(f"Released client {client_idx}")
             self._condition.notify()
 
-    def reconnect(self, client_idx: int, container_urls: list) -> "GenericEnvClient":
+    async def reconnect(self, client_idx: int, container_urls: list) -> "GenericEnvClient":
         """Reconnect a failed client.
 
         Args:
@@ -373,40 +379,77 @@ class ConnectionPool:
             New client instance.
         """
         from openenv import GenericEnvClient
-        import time
+        import asyncio
 
         num_containers = len(container_urls)
         container_idx = client_idx % num_containers
         base_url = container_urls[container_idx]
 
-        logger.info(f"Reconnecting client {client_idx} to {base_url}")
+        logger.info(f"Reconnecting sync client {client_idx} to {base_url}")
 
-        try:
-            if self.clients[client_idx]:
-                self.clients[client_idx].close()
-        except Exception as e:
-            logger.debug(f"Error closing old client: {e}")
+        # Close old client in thread pool
+        old_client = self.clients[client_idx]
+        if old_client:
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(self._executor, old_client.close)
+            except Exception as e:
+                logger.debug(f"Error closing old client: {e}")
 
-        time.sleep(1)
+        await asyncio.sleep(1)
 
-        new_client = GenericEnvClient(
-            base_url=base_url,
-            connect_timeout_s=10.0,
-            message_timeout_s=self.request_timeout_s,
-        )
-        new_client.connect()
-        new_client.reset()
+        # Create new client in thread pool
+        def create_client():
+            client = GenericEnvClient(
+                base_url=base_url,
+                connect_timeout_s=10.0,
+                message_timeout_s=self.request_timeout_s,
+            )
+            client.reset()
+            return client
+
+        loop = asyncio.get_event_loop()
+        new_client = await loop.run_in_executor(self._executor, create_client)
 
         self.clients[client_idx] = new_client
-        logger.info(f"Client {client_idx} reconnected")
+        logger.info(f"Sync client {client_idx} reconnected")
         return new_client
 
-    def close_all(self):
-        """Close all connections."""
+    async def execute_step(self, client_idx: int, action: dict):
+        """Execute step on client using thread pool to avoid blocking event loop.
+
+        Args:
+            client_idx: Index of client to use.
+            action: Action dictionary to execute.
+
+        Returns:
+            StepResult from the client.
+        """
+        import asyncio
+
+        client = self.clients[client_idx]
+        loop = asyncio.get_event_loop()
+
+        # Run sync WebSocket call in thread pool - doesn't block event loop
+        return await loop.run_in_executor(
+            self._executor,
+            client.step,
+            action
+        )
+
+    async def close_all(self):
+        """Close all connections and shutdown thread pool."""
+        self.close_all_sync()
+        if self._executor:
+            self._executor.shutdown(wait=False)
+            self._executor = None
+
+    def close_all_sync(self):
+        """Close all connections synchronously."""
         for i, client in enumerate(self.clients):
             try:
                 client.close()
-                logger.debug(f"Closed client {i}")
+                logger.debug(f"Closed sync client {i}")
             except Exception as e:
                 logger.warning(f"Error closing client {i}: {e}")
 
