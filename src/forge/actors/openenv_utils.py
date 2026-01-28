@@ -266,23 +266,33 @@ class ConnectionPool:
     while maintaining simple sync WebSocket clients.
     """
 
-    def __init__(self, request_timeout_s: float = 120.0):
+    def __init__(self, request_timeout_s: float = 120.0, max_workers: int | None = None):
         self.request_timeout_s = request_timeout_s
+        self._max_workers = max_workers  # If None, will be derived from num_connections
         self.clients = []
         self.client_available = []
         self._lock = None
         self._condition = None
         self._executor = None
 
-    async def initialize(self):
-        """Initialize async primitives and thread pool."""
+    async def initialize(self, num_connections: int = 16):
+        """Initialize async primitives and thread pool.
+
+        Args:
+            num_connections: Number of connections that will be created.
+                Used to derive thread pool size if max_workers not set.
+        """
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
 
         self._lock = asyncio.Lock()
         self._condition = asyncio.Condition(self._lock)
-        # Thread pool for running sync WebSocket calls without blocking event loop
-        self._executor = ThreadPoolExecutor(max_workers=64, thread_name_prefix="ws_pool")
+
+        # Derive thread pool size: 2 threads per connection, capped at 64
+        # This allows for concurrent execute + health check per connection
+        max_workers = self._max_workers or min(64, max(4, num_connections * 2))
+        logger.info(f"ConnectionPool: Creating thread pool with {max_workers} workers for {num_connections} connections")
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ws_pool")
 
     def create_connections(self, container_urls: list, num_connections: int):
         """Create sync WebSocket connections distributed across containers.

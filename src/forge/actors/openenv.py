@@ -130,7 +130,7 @@ class OpenEnvActor(ForgeActor):
         container_urls = self._container_manager.create_containers(self.num_containers)
 
         # Initialize thread pool and create sync connections
-        await self._pool.initialize()
+        await self._pool.initialize(num_connections=self.num_connections)
         self._pool.create_connections(container_urls, self.num_connections)
 
         # Backward compatibility
@@ -280,7 +280,7 @@ class OpenEnvActor(ForgeActor):
 
             # Recreate
             container_urls = self._container_manager.create_containers(self.num_containers)
-            await self._pool.initialize()
+            await self._pool.initialize(num_connections=self.num_connections)
             self._pool.create_connections(container_urls, self.num_connections)
 
             if self._pool.clients:

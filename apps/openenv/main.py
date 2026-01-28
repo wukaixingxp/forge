@@ -367,8 +367,17 @@ class GenericRewardActor(ForgeActor):
             self._actor_cooldown_until[actor_idx] = current_time + self.circuit_breaker_cooldown_s
             record_metric(f"circuit_breaker/actor_{actor_idx}/tripped", 1, Reduce.SUM)
 
-            # Trigger async restart
-            asyncio.create_task(self._restart_actor(actor_idx))
+            # Trigger async restart with error handling callback
+            def _restart_done_callback(task, idx=actor_idx):
+                try:
+                    exc = task.exception()
+                    if exc is not None:
+                        logger.error(f"Circuit breaker: Restart task for actor {idx} failed: {exc}")
+                except asyncio.CancelledError:
+                    pass  # Task was cancelled, not an error
+
+            restart_task = asyncio.create_task(self._restart_actor(actor_idx))
+            restart_task.add_done_callback(_restart_done_callback)
 
     def _record_success(self, actor_idx: int):
         """Record a successful execution for an actor."""
@@ -434,6 +443,9 @@ class GenericRewardActor(ForgeActor):
         Returns:
             Reward score (0.0 if timeout or error)
         """
+        # Initialize actor index for error logging (may be updated below)
+        env_actor_idx = -1
+
         try:
             # Build action using task-specific function (returns GenericAction)
             sample = {"target": target}
@@ -814,10 +826,36 @@ async def main(cfg: DictConfig):
 
             pad_id = await dataloader.pad_token.call_one()
 
+            # Rollout-side backpressure settings
+            # Only produce new episodes when buffer needs them (prevents sample waste)
+            batch_size = cfg.batch_size
+            episodes_per_step = batch_size * group_size
+            # Buffer target: enough for N training steps (configurable via env var)
+            buffer_target_steps = int(os.environ.get("FORGE_BUFFER_TARGET_STEPS", "4"))
+            max_buffer_episodes = episodes_per_step * buffer_target_steps
+            backpressure_check_interval = float(os.environ.get("FORGE_BACKPRESSURE_CHECK_INTERVAL", "0.5"))
+
             while not shutdown_event.is_set():
                 try:
                     t = Tracer("main_perf/continuous_rollouts")
                     t.start()
+
+                    # ROLLOUT BACKPRESSURE: Check if buffer needs more episodes
+                    # This prevents overproduction and sample waste
+                    try:
+                        buffer_size = await replay_buffer._numel.call_one()
+                        if buffer_size >= max_buffer_episodes:
+                            # Buffer is full enough, wait before producing more
+                            record_metric("rollout/backpressure/paused", 1, Reduce.SUM)
+                            record_metric("rollout/backpressure/buffer_size", buffer_size, Reduce.MAX)
+                            await asyncio.sleep(backpressure_check_interval)
+                            t.stop()  # Don't count this as a rollout iteration
+                            continue
+                    except Exception as e:
+                        # If buffer check fails, continue with rollout
+                        logger.debug(f"Buffer size check failed: {e}")
+
+                    t.step("backpressure_check")
 
                     # Timeout on data loading
                     try:
