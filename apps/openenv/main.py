@@ -31,7 +31,7 @@ import logging
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, TYPE_CHECKING
 
@@ -276,12 +276,13 @@ class GenericRewardActor(ForgeActor):
 
     _request_counter: int = 0  # For round-robin distribution
 
-    # Circuit breaker state (initialized in setup)
-    _actor_timeout_counts: list = None  # Timeout count per actor
-    _actor_timeout_timestamps: list = None  # Recent timeout timestamps per actor
-    _actor_healthy: list = None  # Health status per actor
-    _actor_cooldown_until: list = None  # Cooldown end time per actor
-    _restart_in_progress: list = None  # Restart lock per actor
+    # Circuit breaker state (initialized in setup using field defaults for safety)
+    _actor_timeout_counts: list = field(default_factory=list)  # Timeout count per actor
+    _actor_timeout_timestamps: list = field(default_factory=list)  # Recent timeout timestamps per actor
+    _actor_healthy: list = field(default_factory=list)  # Health status per actor
+    _actor_cooldown_until: list = field(default_factory=list)  # Cooldown end time per actor
+    _restart_in_progress: list = field(default_factory=list)  # Restart lock per actor
+    _restart_tasks: list = field(default_factory=list)  # Track restart tasks for cleanup
 
     @endpoint
     async def setup(self):
@@ -375,9 +376,13 @@ class GenericRewardActor(ForgeActor):
                         logger.error(f"Circuit breaker: Restart task for actor {idx} failed: {exc}")
                 except asyncio.CancelledError:
                     pass  # Task was cancelled, not an error
+                # Remove completed task from tracking list
+                if task in self._restart_tasks:
+                    self._restart_tasks.remove(task)
 
             restart_task = asyncio.create_task(self._restart_actor(actor_idx))
             restart_task.add_done_callback(_restart_done_callback)
+            self._restart_tasks.append(restart_task)  # Track for cleanup during shutdown
 
     def _record_success(self, actor_idx: int):
         """Record a successful execution for an actor."""
@@ -488,10 +493,30 @@ class GenericRewardActor(ForgeActor):
         except Exception as e:
             logger.error(f"Evaluation error on actor {env_actor_idx}: {e}")
             # Connection errors also count towards circuit breaker
-            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+            # Only record timeout if we actually got an actor (env_actor_idx >= 0)
+            # to avoid recording against wrong actor when build_action_fn fails
+            if env_actor_idx >= 0 and ("connection" in str(e).lower() or "websocket" in str(e).lower()):
                 self._record_timeout(env_actor_idx)
             record_metric("reward/evaluate_response/error_count", 1, Reduce.SUM)
             return 0.0
+
+    @endpoint
+    async def cancel_restart_tasks(self) -> int:
+        """Cancel all pending restart tasks during shutdown.
+
+        Returns:
+            Number of tasks that were cancelled
+        """
+        cancelled_count = 0
+        for task in self._restart_tasks:
+            if not task.done():
+                task.cancel()
+                cancelled_count += 1
+        # Wait for all tasks to complete cancellation
+        if self._restart_tasks:
+            await asyncio.gather(*self._restart_tasks, return_exceptions=True)
+        self._restart_tasks.clear()
+        return cancelled_count
 
     @endpoint
     async def get_health_status(self) -> Dict[str, Any]:
@@ -1007,6 +1032,11 @@ async def main(cfg: DictConfig):
                     rewards_std = torch.std(torch.tensor(rewards))
                     is_low_variance = rewards_std < variance_threshold
 
+                    # DAPO/GRPO aggressive truncation dropout: Drop entire batch if ANY
+                    # response was truncated (stop_reason == "length"). This is intentional
+                    # per DAPO paper recommendations - truncated responses provide incomplete
+                    # signal and can hurt training. The dropout is batch-level rather than
+                    # per-episode to maintain advantage computation correctness within groups.
                     num_truncated = sum(
                         1 for e in episodes if e.stop_reason == "length"
                     )
@@ -1352,6 +1382,14 @@ async def main(cfg: DictConfig):
             await asyncio.gather(*rollout_tasks, return_exceptions=True)
 
         training_task.cancel()
+
+        # Cancel any pending circuit breaker restart tasks
+        try:
+            cancelled = await reward_actor.cancel_restart_tasks.route()
+            if cancelled > 0:
+                print(f"Cancelled {cancelled} pending circuit breaker restart tasks")
+        except Exception as cancel_err:
+            print(f"Warning: Error cancelling restart tasks: {cancel_err}")
 
         print(f"Cleaning up {len(env_actors)} environment Docker containers...")
         for i, env_actor in enumerate(env_actors):

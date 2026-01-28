@@ -32,7 +32,12 @@ class Episode:
 
     @property
     def policy_version(self) -> int | None:
-        return self.completion.generator_version
+        return self.completion.generator_version if self.completion else None
+
+    @property
+    def stop_reason(self) -> str | None:
+        """Get stop reason from completion for truncation detection."""
+        return self.completion.stop_reason if self.completion else None
 
     @property
     def request_tensor(self) -> torch.Tensor:

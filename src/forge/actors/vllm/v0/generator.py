@@ -717,24 +717,71 @@ class GeneratorWorker(ForgeActor):
 
         # Chunked parallel fetching: fetch in batches to balance parallelism with memory
         # Too many parallel fetches causes memory pressure; too few loses parallelism benefit
-        # Batch size of 16 = ~1GB per batch for 8B model (16 * 64MB avg param size)
-        BATCH_SIZE = 16
+        # Default batch size of 16 = ~1GB per batch for 8B model (16 * 64MB avg param size)
+        # Configurable via FORGE_WEIGHT_FETCH_BATCH_SIZE for different model sizes
+        BATCH_SIZE = int(os.environ.get("FORGE_WEIGHT_FETCH_BATCH_SIZE", "16"))
         param_keys = [get_param_key(version, name) for name in hf_param_names]
         logger.info(
             f"[GeneratorWorker] Fetching {len(param_keys)} parameters in batches of {BATCH_SIZE}..."
         )
+
+        # Retry configuration for RDMA resilience
+        MAX_RETRIES = 3
+        BASE_DELAY = 1.0
+
+        async def _fetch_with_retry(key: str) -> torch.Tensor:
+            """Fetch a single weight with exponential backoff retry."""
+            last_exception = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    return await ts.get(key)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < MAX_RETRIES - 1:
+                        delay = BASE_DELAY * (2**attempt)
+                        logger.warning(
+                            f"[GeneratorWorker] Weight fetch failed (attempt {attempt + 1}/{MAX_RETRIES}), "
+                            f"retrying in {delay:.1f}s: {e}"
+                        )
+                        record_metric("generator/weight_update/retries", 1, Reduce.SUM)
+                        await asyncio.sleep(delay)
+            # Record failure metric before raising
+            record_metric("generator/weight_update/fetch_failures", 1, Reduce.SUM)
+            raise last_exception
 
         for batch_start in range(0, len(hf_param_names), BATCH_SIZE):
             batch_end = min(batch_start + BATCH_SIZE, len(hf_param_names))
             batch_names = hf_param_names[batch_start:batch_end]
             batch_keys = param_keys[batch_start:batch_end]
 
-            # Fetch batch in parallel
+            # Fetch batch in parallel with retry logic
             # With GPU Direct RDMA enabled, torchstore will allocate directly on GPU
-            batch_params = await asyncio.gather(*[ts.get(key) for key in batch_keys])
+            batch_results = await asyncio.gather(
+                *[_fetch_with_retry(key) for key in batch_keys],
+                return_exceptions=True,
+            )
+
+            # Check for any failures that persisted after retries
+            failed_indices = [
+                i for i, result in enumerate(batch_results) if isinstance(result, Exception)
+            ]
+            if failed_indices:
+                failed_names = [batch_names[i] for i in failed_indices]
+                failed_exceptions = [batch_results[i] for i in failed_indices]
+                record_metric(
+                    "generator/weight_update/batch_failures", len(failed_indices), Reduce.SUM
+                )
+                logger.error(
+                    f"[GeneratorWorker] Failed to fetch {len(failed_indices)} weights after retries: "
+                    f"{failed_names}"
+                )
+                raise RuntimeError(
+                    f"Failed to fetch {len(failed_indices)} weights after {MAX_RETRIES} retries: "
+                    f"{failed_names}. First error: {failed_exceptions[0]}"
+                )
 
             # Load batch to model and free memory immediately
-            for name, param in zip(batch_names, batch_params):
+            for name, param in zip(batch_names, batch_results):
                 # If param is on GPU (from GPU Direct RDMA), it's already ready
                 # If on CPU, load_weights will handle the transfer
                 loaded = model.load_weights([(name, param)])
@@ -774,23 +821,64 @@ class _WeightFetcher(ForgeActor):
     ) -> dict[str, SharedTensorHandle]:
         """Fetch weights from torchstore and load them into shared memory."""
         # Chunked parallel fetching to balance parallelism with memory pressure
-        BATCH_SIZE = 16
+        # Configurable via FORGE_WEIGHT_FETCH_BATCH_SIZE for different model sizes
+        BATCH_SIZE = int(os.environ.get("FORGE_WEIGHT_FETCH_BATCH_SIZE", "16"))
         sd = {}
+
+        # Retry configuration for RDMA resilience
+        MAX_RETRIES = 3
+        BASE_DELAY = 1.0
+
+        async def _fetch_with_retry(key: str) -> torch.Tensor:
+            """Fetch a single weight with exponential backoff retry."""
+            last_exception = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    return await ts.get(key)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < MAX_RETRIES - 1:
+                        delay = BASE_DELAY * (2**attempt)
+                        logger.warning(
+                            f"[WeightFetcher] Weight fetch failed (attempt {attempt + 1}/{MAX_RETRIES}), "
+                            f"retrying in {delay:.1f}s: {e}"
+                        )
+                        record_metric("generator/weight_fetcher/retries", 1, Reduce.SUM)
+                        await asyncio.sleep(delay)
+            record_metric("generator/weight_fetcher/fetch_failures", 1, Reduce.SUM)
+            raise last_exception
 
         for batch_start in range(0, len(param_names), BATCH_SIZE):
             batch_end = min(batch_start + BATCH_SIZE, len(param_names))
             batch_names = param_names[batch_start:batch_end]
             batch_keys = [get_param_key(version, name) for name in batch_names]
 
-            # Fetch batch in parallel
-            batch_params = await asyncio.gather(*[ts.get(key) for key in batch_keys])
+            # Fetch batch in parallel with retry logic
+            batch_results = await asyncio.gather(
+                *[_fetch_with_retry(key) for key in batch_keys],
+                return_exceptions=True,
+            )
+
+            # Check for any failures that persisted after retries
+            failed_indices = [
+                i for i, result in enumerate(batch_results) if isinstance(result, Exception)
+            ]
+            if failed_indices:
+                failed_names = [batch_names[i] for i in failed_indices]
+                record_metric(
+                    "generator/weight_fetcher/batch_failures", len(failed_indices), Reduce.SUM
+                )
+                raise RuntimeError(
+                    f"[WeightFetcher] Failed to fetch {len(failed_indices)} weights after {MAX_RETRIES} retries: "
+                    f"{failed_names}"
+                )
 
             # Create shared tensors and free memory immediately
             # Use explicit resource handling instead of context manager because
             # ownership is transferred to the Generator (which calls handle.drop()
             # to clean up). We must unregister from resource_tracker here, otherwise
             # the fetcher process will try to clean up the shared memory on exit.
-            for name, param in zip(batch_names, batch_params):
+            for name, param in zip(batch_names, batch_results):
                 shared_tensor = SharedTensor(tensor=param)
                 handle = shared_tensor.get_handle()
                 resource_tracker.unregister(f"/{handle.shm_name}", "shared_memory")
