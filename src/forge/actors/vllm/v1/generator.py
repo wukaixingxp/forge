@@ -516,6 +516,244 @@ class Generator(ForgeActor):
         logger.info(f"Weight update complete, now v{version}")
 
     @endpoint
+    async def update_weights_gpu_direct(
+        self,
+        version: int,
+        param_shapes: dict[str, tuple],
+    ) -> None:
+        """Update weights using GPU-direct sliced fetching.
+
+        This method fetches only the slices needed for each TP rank directly
+        from sharded storage, avoiding the CPU shared memory path.
+
+        Args:
+            version: Policy version to load from torchstore
+            param_shapes: Dict mapping param names to global shapes (from trainer.get_param_shapes())
+        """
+        if self.llm is None:
+            raise RuntimeError("Generator not initialized. Call setup() first.")
+
+        logger.info(f"Starting GPU-direct weight update to v{version}")
+
+        # Get parallelism config
+        tp_size = self.vllm_config.parallel_config.tensor_parallel_size
+
+        # Start prefetching weights with TP-aware slicing
+        fetch_task = asyncio.create_task(
+            self._fetch_weights_tp_aware(version, param_shapes, tp_size)
+        )
+
+        pause_start = time.perf_counter()
+        await self.llm.pause_generation(
+            wait_for_inflight_requests=True, clear_cache=True
+        )
+        pause_duration = time.perf_counter() - pause_start
+        record_metric(
+            "generator_perf/update_weights_gpu_direct/pause_generation_duration_s",
+            pause_duration,
+            Reduce.MEAN,
+        )
+
+        try:
+            load_start = time.perf_counter()
+
+            # Wait for fetch to complete
+            wait_fetch_start = time.perf_counter()
+            fetched_weights = await fetch_task
+            wait_fetch_duration = time.perf_counter() - wait_fetch_start
+            record_metric(
+                "generator_perf/update_weights_gpu_direct/wait_fetch_weights_s",
+                wait_fetch_duration,
+                Reduce.MEAN,
+            )
+
+            # Apply weights - they're already correctly sliced for each TP rank
+            # Each worker gets all weights but only loads what belongs to its TP rank
+            await self.workers.apply_gpu_weights.call(fetched_weights)
+
+            load_duration = time.perf_counter() - load_start
+            record_metric(
+                "generator_perf/update_weights_gpu_direct/worker_load_weights_duration_s",
+                load_duration,
+                Reduce.MEAN,
+            )
+            self.generator_version = version
+        finally:
+            await self.llm.resume_generation()
+        logger.info(f"GPU-direct weight update complete, now v{version}")
+
+    async def _fetch_weights_tp_aware(
+        self,
+        version: int,
+        param_shapes: dict[str, tuple],
+        tp_size: int,
+    ) -> dict[str, torch.Tensor]:
+        """Fetch weights with TP-aware slicing.
+
+        For each parameter, computes the slice spec based on whether it's
+        column-parallel, row-parallel, or replicated. Only fetches the
+        intersecting portions from stored FSDP shards.
+
+        Args:
+            version: Policy version to fetch
+            param_shapes: Dict mapping param names to global shapes
+            tp_size: Tensor parallel size
+
+        Returns:
+            Dict mapping param names to tensors (correctly sliced for TP)
+        """
+        from torchstore.transport.types import TensorSlice
+
+        prefix = get_param_prefix(version)
+        matching_keys = await ts.keys(prefix)
+
+        state_dict = {}
+        target_device = "cuda:0"  # Will be on GPU after fetch
+
+        for key in matching_keys:
+            param_name = extract_param_name(key)
+
+            if param_name not in param_shapes:
+                logger.warning(f"Unknown param shape for {param_name}, fetching full tensor")
+                tensor = await ts.get(key)
+                state_dict[param_name] = tensor
+                continue
+
+            global_shape = param_shapes[param_name]
+
+            # For TP=1 or replicated params, fetch full tensor
+            if tp_size == 1:
+                tensor = await ts.get(key)
+                state_dict[param_name] = tensor
+                continue
+
+            # Compute TP slice specs for all TP ranks
+            # Each rank will get its own slice
+            slice_specs = self._compute_all_tp_slices(param_name, global_shape, tp_size)
+
+            if slice_specs is None:
+                # Replicated param - fetch full tensor
+                tensor = await ts.get(key)
+                state_dict[param_name] = tensor
+            else:
+                # Sharded param - fetch each TP rank's slice
+                # Store as dict: {tp_rank: tensor}
+                sliced_tensors = {}
+                for tp_rank, slice_spec in enumerate(slice_specs):
+                    tensor = await ts.get_slice(key, slice_spec, target_device=target_device)
+                    sliced_tensors[tp_rank] = tensor
+                state_dict[param_name] = sliced_tensors
+
+        logger.info(f"[Generator] Fetched {len(state_dict)} weights for v{version} (TP-aware)")
+        return state_dict
+
+    def _compute_all_tp_slices(
+        self,
+        param_name: str,
+        global_shape: tuple,
+        tp_size: int,
+    ) -> list | None:
+        """Compute TP slice specs for all ranks.
+
+        Args:
+            param_name: Parameter name (HF format)
+            global_shape: Full tensor shape
+            tp_size: Tensor parallel size
+
+        Returns:
+            List of TensorSlice (one per TP rank), or None for replicated params
+        """
+        from torchstore.transport.types import TensorSlice
+
+        shard_type = self._get_tp_sharding_type(param_name)
+
+        if shard_type == "replicated" or len(global_shape) < 2:
+            return None
+
+        slices = []
+        for tp_rank in range(tp_size):
+            if shard_type == "column_parallel":
+                # Shard columns (dim=1): each rank gets 1/tp_size of columns
+                col_size = global_shape[1] // tp_size
+                slice_spec = TensorSlice(
+                    offsets=(0, tp_rank * col_size),
+                    coordinates=(tp_rank,),
+                    global_shape=global_shape,
+                    local_shape=(global_shape[0], col_size),
+                    mesh_shape=(tp_size,),
+                )
+            elif shard_type == "row_parallel":
+                # Shard rows (dim=0): each rank gets 1/tp_size of rows
+                row_size = global_shape[0] // tp_size
+                slice_spec = TensorSlice(
+                    offsets=(tp_rank * row_size, 0),
+                    coordinates=(tp_rank,),
+                    global_shape=global_shape,
+                    local_shape=(row_size, global_shape[1]),
+                    mesh_shape=(tp_size,),
+                )
+            elif shard_type == "vocab_parallel":
+                # Shard vocab dimension (dim=0)
+                vocab_size = global_shape[0] // tp_size
+                slice_spec = TensorSlice(
+                    offsets=(tp_rank * vocab_size, 0),
+                    coordinates=(tp_rank,),
+                    global_shape=global_shape,
+                    local_shape=(vocab_size, global_shape[1]),
+                    mesh_shape=(tp_size,),
+                )
+            else:
+                return None  # Unknown type, treat as replicated
+
+            slices.append(slice_spec)
+
+        return slices
+
+    def _get_tp_sharding_type(self, param_name: str) -> str:
+        """Determine TP sharding type for a parameter based on its name.
+
+        Returns one of: "column_parallel", "row_parallel", "vocab_parallel", "replicated"
+        """
+        # Column parallel (shard on dim=1)
+        column_parallel_patterns = [
+            "q_proj", "k_proj", "v_proj", "qkv_proj",
+            "gate_proj", "up_proj", "gate_up_proj",
+        ]
+        # Row parallel (shard on dim=0)
+        row_parallel_patterns = [
+            "o_proj", "down_proj",
+        ]
+        # Vocab parallel (shard on dim=0 for embeddings/head)
+        vocab_parallel_patterns = [
+            "embed_tokens", "lm_head",
+        ]
+        # Replicated (no sharding)
+        replicated_patterns = [
+            "layernorm", "norm", "router",
+        ]
+
+        param_lower = param_name.lower()
+
+        for pattern in column_parallel_patterns:
+            if pattern in param_lower:
+                return "column_parallel"
+
+        for pattern in row_parallel_patterns:
+            if pattern in param_lower:
+                return "row_parallel"
+
+        for pattern in vocab_parallel_patterns:
+            if pattern in param_lower:
+                return "vocab_parallel"
+
+        for pattern in replicated_patterns:
+            if pattern in param_lower:
+                return "replicated"
+
+        # Default: replicated for unknown patterns
+        return "replicated"
+
+    @endpoint
     async def save_model_params(self):
         """Save model parameters before weight update, used for testing purposes only."""
         logger.info("save model parameters for testing.")

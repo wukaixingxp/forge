@@ -317,21 +317,230 @@ class TitanTrainer(ForgeActor):
         logger.info(f"Pushing weights for policy version {policy_version}")
 
         start_time = time.perf_counter()
-        if "model" not in self.engine.checkpointer.states:
-            raise RuntimeError("Model state not found in checkpointer state")
 
-        sd = self.engine.checkpointer.states["model"].state_dict()
+        # Get model state dict directly from model_parts (works with or without checkpointing)
+        # Note: For FSDP models, state_dict() triggers all_gather to reconstruct full tensors
+        if len(self.engine.model_parts) != 1:
+            raise RuntimeError("push_weights only supports single model part (no PP)")
+
+        sd = self.engine.model_parts[0].state_dict()
         flattened_state_dict, _ = flatten_state_dict(sd)
-        if self.engine.checkpointer.sd_adapter is None:
-            raise RuntimeError(
-                "Trying to save checkpoint in HF safetensors format, but sd_adapter is not provided."
-            )
-        hf_state_dict = self.engine.checkpointer.sd_adapter.to_hf(flattened_state_dict)
-        for name, param in hf_state_dict.items():
-            key = get_param_key(policy_version, name)
-            await ts.put(key, param)
+
+        # Convert to HF format if adapter is available
+        # Note: when checkpoint.enable=False, checkpointer doesn't have sd_adapter attribute
+        sd_adapter = getattr(self.engine.checkpointer, 'sd_adapter', None)
+        if sd_adapter is not None:
+            hf_state_dict = sd_adapter.to_hf(flattened_state_dict)
+        else:
+            # Convert native names to HF names using our helper
+            hf_state_dict = {
+                self._native_to_hf_name(name): param
+                for name, param in flattened_state_dict.items()
+            }
+
+        # Use parallel puts for better performance (batched to avoid overwhelming TorchStore)
+        import asyncio
+        batch_size = 100  # Process 100 params concurrently
+        items = list(hf_state_dict.items())
+        total_params = len(items)
+
+        for batch_start in range(0, total_params, batch_size):
+            batch_end = min(batch_start + batch_size, total_params)
+            batch = items[batch_start:batch_end]
+
+            async def put_param(name: str, param: torch.Tensor) -> None:
+                key = get_param_key(policy_version, name)
+                await ts.put(key, param)
+
+            await asyncio.gather(*[put_param(name, param) for name, param in batch])
+
+            if batch_start % 500 == 0:
+                logger.info(f"Push progress: {batch_end}/{total_params} params")
+
         end_time = time.perf_counter()
         logger.info("Completed weights push in %.2f seconds", end_time - start_time)
+
+    @endpoint
+    async def push_weights_sharded(self, policy_version: int) -> dict:
+        """Push FSDP shards directly to TorchStore without gathering.
+
+        Each FSDP rank stores its local shard with TensorSlice metadata,
+        enabling slice-aware fetching by generators. This avoids the CPU memory
+        spike from FSDP all_gather and enables GPU-to-GPU RDMA transfers.
+
+        Args:
+            policy_version: Version number for these weights.
+
+        Returns:
+            Dict with metadata about pushed shards (param_count, shapes).
+        """
+        from torch.distributed.tensor import DTensor
+        from torch.distributed.tensor._utils import _compute_local_shape_and_global_offset
+        from torchstore.transport.types import TensorSlice
+
+        logger.info(f"Pushing sharded weights for policy version {policy_version}")
+        start_time = time.perf_counter()
+
+        # Get FSDP mesh info from parallel_dims
+        dp_rank = self.engine.dp_rank
+        dp_world_size = self.engine.parallel_dims.dp_shard
+
+        import asyncio
+
+        param_metadata = {}
+        put_tasks = []  # Collect all put operations for batch execution
+
+        # Iterate through model parts (usually just one for non-PP)
+        for model_part in self.engine.model_parts:
+            for fqn, param in model_part.named_parameters():
+                # Check if parameter is a DTensor (sharded by FSDP)
+                if isinstance(param, DTensor):
+                    # Get local shard WITHOUT triggering all_gather
+                    local_shard = param._local_tensor
+
+                    # Compute global offsets from DTensor placement info
+                    coordinates = param.device_mesh.get_coordinate()
+                    _, offsets = _compute_local_shape_and_global_offset(
+                        param.shape,  # Global shape
+                        mesh_shape=param.device_mesh.shape,
+                        my_coordinate=coordinates,
+                        placements=param.placements,
+                    )
+
+                    # Create TensorSlice metadata
+                    tensor_slice = TensorSlice(
+                        offsets=tuple(offsets),
+                        coordinates=tuple(coordinates) if coordinates else (dp_rank,),
+                        global_shape=tuple(param.shape),
+                        local_shape=tuple(local_shard.shape),
+                        mesh_shape=tuple(param.device_mesh.shape) if param.device_mesh else (dp_world_size,),
+                    )
+
+                    # Convert to HF-style naming if adapter available
+                    # For sharded push, we store native names and let consumer convert
+                    hf_name = self._native_to_hf_name(fqn)
+
+                    key = get_param_key(policy_version, hf_name)
+                    put_tasks.append((key, local_shard, tensor_slice, True))  # True = slice
+
+                    param_metadata[hf_name] = {
+                        "global_shape": tuple(param.shape),
+                        "local_shape": tuple(local_shard.shape),
+                        "offsets": tuple(offsets),
+                        "coordinates": tuple(coordinates) if coordinates else (dp_rank,),
+                    }
+                else:
+                    # Non-DTensor parameter (shouldn't happen with FSDP, but handle it)
+                    hf_name = self._native_to_hf_name(fqn)
+                    key = get_param_key(policy_version, hf_name)
+                    put_tasks.append((key, param, None, False))  # False = regular put
+
+                    param_metadata[hf_name] = {
+                        "global_shape": tuple(param.shape),
+                        "local_shape": tuple(param.shape),
+                        "offsets": (0,) * len(param.shape),
+                        "coordinates": (0,),
+                    }
+
+        # Execute puts in parallel batches
+        batch_size = 100
+        pushed_count = len(put_tasks)
+
+        for batch_start in range(0, pushed_count, batch_size):
+            batch_end = min(batch_start + batch_size, pushed_count)
+            batch = put_tasks[batch_start:batch_end]
+
+            async def do_put(key, tensor, tensor_slice, is_slice):
+                if is_slice:
+                    await ts.put_slice(key, tensor, tensor_slice)
+                else:
+                    await ts.put(key, tensor)
+
+            await asyncio.gather(*[do_put(k, t, s, is_s) for k, t, s, is_s in batch])
+
+            if batch_start % 500 == 0:
+                logger.info(f"[Rank {dp_rank}] Push progress: {batch_end}/{pushed_count} params")
+
+        # Barrier to ensure all ranks have finished pushing
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+
+        end_time = time.perf_counter()
+        logger.info(
+            f"[Rank {dp_rank}] Pushed {pushed_count} shards for "
+            f"policy version {policy_version} in {end_time - start_time:.2f}s"
+        )
+
+        return {
+            "param_count": pushed_count,
+            "dp_rank": dp_rank,
+            "dp_world_size": dp_world_size,
+            "metadata": param_metadata,
+        }
+
+    def _native_to_hf_name(self, native_fqn: str) -> str:
+        """Convert native TorchTitan parameter name to HuggingFace format.
+
+        This is a simplified version that handles common patterns.
+        For full conversion, use the sd_adapter.to_hf() method on gathered tensors.
+        """
+        # Common mappings for Llama-style models
+        mappings = {
+            "tok_embeddings.weight": "model.embed_tokens.weight",
+            "norm.weight": "model.norm.weight",
+            "output.weight": "lm_head.weight",
+        }
+
+        # Direct match
+        if native_fqn in mappings:
+            return mappings[native_fqn]
+
+        # Layer-based mappings
+        import re
+        layer_mappings = {
+            r"layers\.(\d+)\.attention\.wq\.weight": r"model.layers.\1.self_attn.q_proj.weight",
+            r"layers\.(\d+)\.attention\.wk\.weight": r"model.layers.\1.self_attn.k_proj.weight",
+            r"layers\.(\d+)\.attention\.wv\.weight": r"model.layers.\1.self_attn.v_proj.weight",
+            r"layers\.(\d+)\.attention\.wo\.weight": r"model.layers.\1.self_attn.o_proj.weight",
+            r"layers\.(\d+)\.attention_norm\.weight": r"model.layers.\1.input_layernorm.weight",
+            r"layers\.(\d+)\.ffn_norm\.weight": r"model.layers.\1.post_attention_layernorm.weight",
+            # MoE patterns for Llama4
+            r"layers\.(\d+)\.moe\.router\.gate\.weight": r"model.layers.\1.feed_forward.router.weight",
+            r"layers\.(\d+)\.moe\.shared_experts\.w1\.weight": r"model.layers.\1.feed_forward.shared_expert.gate_proj.weight",
+            r"layers\.(\d+)\.moe\.shared_experts\.w2\.weight": r"model.layers.\1.feed_forward.shared_expert.down_proj.weight",
+            r"layers\.(\d+)\.moe\.shared_experts\.w3\.weight": r"model.layers.\1.feed_forward.shared_expert.up_proj.weight",
+            r"layers\.(\d+)\.moe\.experts\.w1": r"model.layers.\1.feed_forward.experts.gate_proj",
+            r"layers\.(\d+)\.moe\.experts\.w2": r"model.layers.\1.feed_forward.experts.down_proj",
+            r"layers\.(\d+)\.moe\.experts\.w3": r"model.layers.\1.feed_forward.experts.up_proj",
+            # Standard MLP patterns (for non-MoE layers)
+            r"layers\.(\d+)\.feed_forward\.w1\.weight": r"model.layers.\1.mlp.gate_proj.weight",
+            r"layers\.(\d+)\.feed_forward\.w2\.weight": r"model.layers.\1.mlp.down_proj.weight",
+            r"layers\.(\d+)\.feed_forward\.w3\.weight": r"model.layers.\1.mlp.up_proj.weight",
+        }
+
+        for pattern, replacement in layer_mappings.items():
+            if re.match(pattern, native_fqn):
+                return re.sub(pattern, replacement, native_fqn)
+
+        # If no mapping found, return as-is (prefixed with model.)
+        if not native_fqn.startswith("model."):
+            return f"model.{native_fqn}"
+        return native_fqn
+
+    @endpoint
+    async def get_param_shapes(self) -> dict:
+        """Get global shapes of all parameters for generator to compute TP slices.
+
+        Returns:
+            Dict mapping HF param names to their global shapes.
+        """
+        param_shapes = {}
+        for model_part in self.engine.model_parts:
+            for fqn, param in model_part.named_parameters():
+                hf_name = self._native_to_hf_name(fqn)
+                # For DTensors, param.shape gives global shape
+                param_shapes[hf_name] = tuple(param.shape)
+        return param_shapes
 
     @endpoint
     async def cleanup(self) -> None:

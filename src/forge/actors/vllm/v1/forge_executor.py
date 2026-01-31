@@ -134,6 +134,72 @@ class ForgeWorkerWrapper(WorkerWrapper):
             loaded_count += 1
         return loaded_count
 
+    @endpoint
+    @trace(
+        prefix="generator_perf/update_weights/apply_gpu_weights",
+        track_memory=False,
+        timer="gpu",
+    )
+    def apply_gpu_weights(
+        self,
+        gpu_state_dict: dict[str, any],
+    ) -> int:
+        """Load weights that are already on GPU (GPU-direct path).
+
+        Unlike apply_prefetched_weights(), tensors may already be on GPU or
+        may be sliced for this worker's TP rank. This method handles:
+        - Full tensors (replicated params)
+        - TP-sliced tensors (dict mapping tp_rank -> tensor)
+
+        Args:
+            gpu_state_dict: Dict mapping param names to either:
+                - torch.Tensor: Full tensor (replicated) or already-sliced tensor
+                - dict[int, torch.Tensor]: TP-sliced tensors keyed by rank
+
+        Returns:
+            Number of parameters loaded
+        """
+        import torch
+        from monarch.actor import context
+
+        model = self.worker.model_runner.model
+
+        # Get this worker's TP rank from context
+        # In vLLM, workers are indexed by global rank
+        rank = context().actor_instance.rank.rank
+        tp_size = self.vllm_config.parallel_config.tensor_parallel_size
+        tp_rank = rank % tp_size
+
+        loaded_count = 0
+
+        for name, param_data in gpu_state_dict.items():
+            if isinstance(param_data, dict):
+                # TP-sliced: get this rank's slice
+                if tp_rank in param_data:
+                    tensor = param_data[tp_rank]
+                else:
+                    logger.warning(f"No slice for TP rank {tp_rank} in {name}")
+                    continue
+            elif isinstance(param_data, torch.Tensor):
+                # Full tensor (replicated) - use as-is
+                tensor = param_data
+            else:
+                logger.warning(f"Unknown param type for {name}: {type(param_data)}")
+                continue
+
+            # Ensure tensor is on GPU
+            if not tensor.is_cuda:
+                tensor = tensor.cuda()
+
+            # Load into model
+            model.load_weights([(name, tensor)])
+            loaded_count += 1
+
+        logger.info(
+            f"[ForgeWorkerWrapper] Applied {loaded_count} GPU weights (TP rank {tp_rank})"
+        )
+        return loaded_count
+
     async def _get_torchstore_client(self) -> LocalClient:
         """Get or create a LocalClient using the passed Controller reference.
 
