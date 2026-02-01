@@ -136,7 +136,38 @@ We needed a translation layer to map HuggingFace names to vLLM's merged paramete
 
 With TP=2, each generator GPU holds half of certain weight matrices. The trainer sends full weights; the generator must slice correctly for its rank.
 
-### Challenge 4: The /dev/shm Ghost Problem
+### Challenge 4: GQA (Grouped Query Attention) Slicing
+
+Modern models like Qwen3 use GQA where Q has more heads than K/V:
+
+```
+Qwen3-4B head configuration:
+  Q: 16 attention heads → 2048 output dim
+  K: 4 KV heads         → 512 output dim  ← Different!
+  V: 4 KV heads         → 512 output dim
+
+vLLM merges these into qkv_proj.weight:
+  Total: [3072, 2048] = [Q + K + V, hidden_size]
+
+With TP=2, each rank gets:
+  TP rank 0: Q[0:1024], K[0:256], V[0:256] → [1536, 2048]
+  TP rank 1: Q[1024:2048], K[256:512], V[256:512] → [1536, 2048]
+```
+
+The naive approach (`part_size = total_qkv_size // 3`) assumes equal Q/K/V sizes and fails for GQA models. We fixed this by querying vLLM's model config:
+
+```python
+# Get head counts from vLLM config
+num_attention_heads = model_config.get_num_attention_heads(parallel_config)  # 16
+num_kv_heads = model_config.get_num_kv_heads(parallel_config)  # 4
+head_dim = model_config.get_head_size()  # 128
+
+# Calculate correct sizes per TP rank
+q_size_per_rank = (num_attention_heads // tp_size) * head_dim  # 1024
+kv_size_per_rank = (num_kv_heads // tp_size) * head_dim  # 256
+```
+
+### Challenge 5: The /dev/shm Ghost Problem
 
 CUDA IPC stores handles (66 bytes each) in `/dev/shm`. Crashed processes leave orphaned handles. After enough experiments:
 
@@ -149,15 +180,211 @@ $ rm -f /dev/shm/cuda.shm.* /dev/shm/torch_*  # Fix
 
 ---
 
+## Deep Dive: FSDP and Weight Sync
+
+The complexity of weight synchronization increases significantly with parallelism. This section explains what happens under the hood for each configuration.
+
+![FSDP Weight Sync Flow](diagrams/05-fsdp-weight-sync.excalidraw)
+
+### Understanding FSDP2 (Fully Sharded Data Parallel)
+
+FSDP2 shards model weights across multiple GPUs to reduce per-GPU memory usage. For a model with N parameters:
+
+```
+Without FSDP (1 GPU):
+┌─────────────────────────────────────────────┐
+│              GPU 0 (100% of model)          │
+│  [param_0, param_1, param_2, ..., param_N]  │
+└─────────────────────────────────────────────┘
+
+With FSDP=2 (2 GPUs):
+┌─────────────────────┐  ┌─────────────────────┐
+│   GPU 0 (50%)       │  │   GPU 1 (50%)       │
+│  [shard_0, shard_2] │  │  [shard_1, shard_3] │
+└─────────────────────┘  └─────────────────────┘
+```
+
+Each parameter becomes a `DTensor` with only its local shard stored. When you call `model.state_dict()`, you get sharded DTensors, NOT full tensors.
+
+### The All-Gather Problem (Baseline Only)
+
+The **baseline** approach requires reconstructing full tensors from shards using an `all_gather` collective operation:
+
+```
+Baseline: DTensor.full_tensor() triggers all_gather:
+
+GPU 0: [shard_0] ──┐              ┌──▶ [full_tensor] on GPU 0
+                   ├──all_gather──┤
+GPU 1: [shard_1] ──┘              └──▶ [full_tensor] on GPU 1
+
+Result: ALL FSDP ranks now have the complete tensor
+Peak memory: 2x per rank during gather (shard + full)
+```
+
+**Critical insight:** CUDA IPC does NOT require all_gather! IPC handles work directly with the local DTensor shard, bypassing the expensive collective entirely. This is the primary source of the 26x speedup in data transfer.
+
+### Configuration 1x1: Simple Direct Transfer
+
+**Setup:** Trainer 1 GPU, Generator 1 GPU (no parallelism)
+
+```
+┌────────────────┐              ┌────────────────┐
+│    Trainer     │              │   Generator    │
+│     GPU 0      │              │     GPU 1      │
+│                │              │                │
+│  Full Model    │──IPC Handle─▶│  Full Model    │
+│  [4.4B params] │   (66 bytes) │  (vLLM loads)  │
+└────────────────┘              └────────────────┘
+
+Data path: param.data → create_ipc_handle → send handle → reconstruct
+No gathering needed - model is already complete on one GPU
+```
+
+**Baseline flow:**
+1. `model.named_parameters()` → iterate tensors
+2. `ts.put(key, tensor)` → serialize + RPC to TorchStore
+3. Generator: `ts.get(key)` → deserialize + copy to GPU
+
+**IPC flow:**
+1. `model.named_parameters()` → iterate tensors
+2. `create_ipc_handle(tensor)` → 66-byte handle
+3. Send handle to generator (no serialization)
+4. Generator: `handle.reconstruct_tensor()` → direct GPU memory access
+
+### Configuration 2x1: FSDP Trainer, Full Generator
+
+**Setup:** Trainer FSDP=2 (2 GPUs), Generator 1 GPU
+
+![2x1 Configuration](diagrams/06-config-2x1.excalidraw)
+
+```
+BASELINE (with all_gather):              IPC (no all_gather):
+┌────────────────────────────┐           ┌────────────────────────────┐
+│      TRAINER (FSDP=2)      │           │      TRAINER (FSDP=2)      │
+│  GPU 0      GPU 1          │           │  GPU 0      GPU 1          │
+│  [shard_0]  [shard_1]      │           │  [shard_0]  [shard_1]      │
+│      │          │          │           │      │                     │
+│      └──all_gather─┘       │           │      │ (no gather!)        │
+│            │               │           │      │                     │
+│     [full_tensor]          │           │  IPC handle for shard_0    │
+│            │               │           │      │                     │
+│     serialize + RPC        │           │      │ direct GPU access   │
+└────────────┬───────────────┘           └──────┬─────────────────────┘
+             │                                   │
+             ▼                                   ▼
+┌────────────────────────────┐           ┌────────────────────────────┐
+│    GENERATOR (TP=1)        │           │    GENERATOR (TP=1)        │
+│    deserialize + copy      │           │    reconstruct + gather    │
+│    Full Model (4.4B)       │           │    Full Model (4.4B)       │
+└────────────────────────────┘           └────────────────────────────┘
+```
+
+**Baseline flow (32.0s total):**
+1. `model.state_dict()` → returns DTensors (sharded)
+2. For each DTensor: `param.full_tensor()` → **all_gather** (GPU collective)
+3. Only rank 0: `ts.put_batch(gathered_tensors)` → serialize + RPC
+4. Generator: `ts.get_batch(keys)` → deserialize + GPU copy
+
+**IPC flow (9.6s total) — NO all_gather on trainer!**
+1. `model.state_dict()` → returns DTensors (sharded)
+2. DTensor operations proxy to `._local_tensor` (local shard)
+3. `create_ipc_handle(dtensor)` → 66-byte handle pointing to **local shard GPU memory**
+4. Send handles → Generator reconstructs tensors directly from trainer GPU shards
+5. Generator combines shards into full model internally
+
+**Key insight:** IPC bypasses the expensive `full_tensor()` all_gather entirely! The DTensor's `_typed_storage()` method returns the local shard's storage, allowing IPC to work directly with sharded memory. This eliminates both:
+- The all_gather collective (O(model_size) GPU communication)
+- Serialization/RPC overhead
+
+**Timing breakdown (from 2x1 IPC benchmark):**
+- Handle creation: **0.038s** (proves no all_gather — would take seconds otherwise)
+- Total push: **0.34s**
+- pause_generation: **7.3s**
+- worker_load: **1.7s**
+- **Total: 9.6s** (vs 32.0s baseline = **3.3x faster**)
+
+### Configuration 2x2: FSDP Trainer, TP Generator
+
+**Setup:** Trainer FSDP=2 (2 GPUs), Generator TP=2 (2 GPUs)
+
+![2x2 Configuration](diagrams/07-config-2x2.excalidraw)
+
+This is the most complex configuration. The baseline must gather on trainer, while IPC can work with shards directly:
+
+```
+BASELINE (with all_gather):              IPC (no all_gather on trainer):
+┌────────────────────────────┐           ┌────────────────────────────┐
+│      TRAINER (FSDP=2)      │           │      TRAINER (FSDP=2)      │
+│  GPU 0      GPU 1          │           │  GPU 0      GPU 1          │
+│  [shard_0]  [shard_1]      │           │  [shard_0]  [shard_1]      │
+│      │          │          │           │      │          │          │
+│      └──all_gather─┘       │           │  IPC handle  IPC handle    │
+│            │               │           │  (shard_0)   (shard_1)     │
+│     [full_tensor]          │           │      │          │          │
+│            │               │           │      └────┬─────┘          │
+│     serialize + RPC        │           │           │                │
+└────────────┬───────────────┘           └───────────┼────────────────┘
+             │                                       │
+             ▼                                       ▼
+┌────────────────────────────┐           ┌────────────────────────────┐
+│    GENERATOR (TP=2)        │           │    GENERATOR (TP=2)        │
+│  TP0: deserialize + slice  │           │  Both ranks reconstruct    │
+│  TP1: deserialize + slice  │           │  from BOTH shards, then    │
+│                            │           │  combine + slice for TP    │
+└────────────────────────────┘           └────────────────────────────┘
+```
+
+**The slicing challenge (GQA models):**
+
+For GQA (Grouped Query Attention) models like Qwen3, Q/K/V have different sizes:
+- Q: 16 attention heads → 2048 output dim
+- K: 4 KV heads → 512 output dim
+- V: 4 KV heads → 512 output dim
+
+vLLM merges these into `qkv_proj.weight` with shape `[3072, 2048]`.
+
+With TP=2, each generator GPU gets half:
+```
+Full qkv_proj:      TP rank 0:         TP rank 1:
+[Q: 2048]           [Q: 1024]          [Q: 1024]
+[K: 512 ]     →     [K: 256 ]          [K: 256 ]
+[V: 512 ]           [V: 256 ]          [V: 256 ]
+[total: 3072]       [total: 1536]      [total: 1536]
+```
+
+**Baseline flow (51.2s total):**
+1. Trainer: `full_tensor()` → **explicit all_gather** (GPU collective)
+2. Push full tensors to TorchStore (serialize + RPC)
+3. Generator workers: fetch full tensors, slice for TP rank
+
+**IPC flow (no trainer-side all_gather):**
+1. Trainer: `model.state_dict()` → DTensors (sharded)
+2. `create_ipc_handle(dtensor)` → handles point to **local shard memory**
+3. Send handles from all FSDP ranks to generator
+4. Generator: reconstruct from shards → combine → slice for TP rank
+
+---
+
 ## Configuration Comparison
 
-| Config | Baseline | IPC | Speedup |
-|--------|----------|-----|---------|
-| 1x1 (FSDP=1, TP=1) | ~38s | 10.6s | **3.6x** |
-| 2x1 (FSDP=2, TP=1) | 45.5s | 9.1s | **5.0x** |
-| 2x2 (FSDP=2, TP=2) | 65.1s | 12.8s | **5.1x** |
+| Config | Baseline | IPC | Speedup | Transfer Speedup |
+|--------|----------|-----|---------|------------------|
+| 1x1 (FSDP=1, TP=1) | 31.2s | 10.6s | **2.9x** | 26x (23.6s → 0.9s) |
+| 2x1 (FSDP=2, TP=1) | 32.0s | 9.6s | **3.3x** | 18x (32.0s → 1.7s) |
+| 2x2 (FSDP=2, TP=2) | 51.2s | TBD | TBD | TBD |
 
-**Recommended:** FSDP=2, TP=1 with IPC — 9.1s sync, best balance of memory efficiency and speed.
+*Note: Times shown are `update_weights` duration. 2x2 IPC needs re-running after GQA fix.*
+
+**Why IPC is dramatically faster:**
+1. **No all_gather on trainer** — IPC works directly with FSDP shards
+2. **No serialization** — 66-byte handles vs multi-GB tensor data
+3. **GPU-direct memory access** — NVLink/PCIe P2P, no CPU involvement
+
+**Why baseline 2x2 is slowest:** Two expensive operations:
+1. Trainer-side all_gather for FSDP (GPU collective)
+2. More parameters to transfer (full model to 2 generator GPUs)
+
+**Recommended:** FSDP=2, TP=1 with IPC — 9.6s sync, best balance of memory efficiency and speed.
 
 ---
 
@@ -243,6 +470,9 @@ See the `diagrams/` folder:
 - [01-data-flow-comparison.excalidraw](diagrams/01-data-flow-comparison.excalidraw) — Data flow for all three approaches
 - [02-timeline-comparison.excalidraw](diagrams/02-timeline-comparison.excalidraw) — Timeline with verified numbers
 - [03-rl-training-loop.excalidraw](diagrams/03-rl-training-loop.excalidraw) — Where weight sync fits in RL
+- [05-fsdp-weight-sync.excalidraw](diagrams/05-fsdp-weight-sync.excalidraw) — FSDP all_gather + IPC flow
+- [06-config-2x1.excalidraw](diagrams/06-config-2x1.excalidraw) — Config 2x1: FSDP trainer → Full generator
+- [07-config-2x2.excalidraw](diagrams/07-config-2x2.excalidraw) — Config 2x2: FSDP trainer → TP generator (GQA)
 
 ---
 
@@ -252,10 +482,12 @@ All benchmark logs are in `apps/gpu_direct/benchmark_logs/`:
 
 | Log File | What It Measures |
 |----------|------------------|
-| `baseline_step2_1x1.log` | Per-tensor RPC: 14s push, 24s fetch = ~38s |
+| `baseline_step2_1x1.log` | 1x1 Baseline: 31.2s update_weights |
+| `ipc_1x1.log` | 1x1 IPC: 10.6s (9.7s pause + 0.9s transfer) |
+| `qwen3_4b_2x1_baseline.log` | 2x1 Baseline: 32.0s update_weights |
+| `ipc_2x1.log` | 2x1 IPC: 9.6s (7.3s pause + 1.7s transfer) |
+| `qwen3_4b_2x2_baseline.log` | 2x2 Baseline: 51.2s update_weights |
 | `phase1_batched_rpc_1x1.log` | Batched RPC: 14s push, 8s fetch = ~22s |
-| `ipc_1x1.log` | IPC: 10.6s total (9.7s pause + 0.9s transfer) |
-| `ipc_2x1.log` | IPC with FSDP=2: 9.6s total |
 
 ---
 

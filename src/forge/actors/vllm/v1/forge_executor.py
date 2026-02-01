@@ -544,24 +544,37 @@ class ForgeWorkerWrapper(WorkerWrapper):
         try:
             if merge_type.startswith("qkv_proj_"):
                 # QKV is merged along output dim (dim 0)
-                # Total size is 3x the individual Q/K/V size
+                # For GQA models, Q has more heads than K/V, so sizes differ
                 # Order: Q, K, V
                 qkv_part = merge_type.split("_")[-1]  # 'q', 'k', or 'v'
-                part_idx = {'q': 0, 'k': 1, 'v': 2}[qkv_part]
 
-                # For TP, each rank has 1/tp_size of each of Q, K, V
-                # Total param shape: [3 * head_dim * num_heads / tp_size, hidden_size]
-                total_qkv_size = param_shape[0]
-                part_size = total_qkv_size // 3  # Size of Q or K or V for this rank
+                # Get head configuration from vLLM model config for GQA support
+                model_config = self.vllm_config.model_config
+                parallel_config = self.vllm_config.parallel_config
+                # These return total heads, not per-rank
+                total_attention_heads = model_config.get_num_attention_heads(parallel_config)
+                total_kv_heads = model_config.get_num_kv_heads(parallel_config)
+                head_dim = model_config.get_head_size()
 
-                # Slice the source tensor for TP if needed
-                if src_shape[0] > part_size:
-                    # Source is full Q (or K or V), need to slice for this TP rank
-                    src_part_size = src_shape[0] // tp_size
-                    tensor = tensor[tp_rank * src_part_size : (tp_rank + 1) * src_part_size]
+                # Calculate sizes per TP rank (heads are sharded across TP ranks)
+                q_size_per_rank = (total_attention_heads // tp_size) * head_dim
+                kv_size_per_rank = (total_kv_heads // tp_size) * head_dim
 
-                # Copy to the correct slice of the merged param
-                start_idx = part_idx * part_size
+                # Slice the source tensor for TP
+                src_part_size = src_shape[0] // tp_size
+                tensor = tensor[tp_rank * src_part_size : (tp_rank + 1) * src_part_size]
+
+                # Calculate offset based on Q/K/V part
+                if qkv_part == 'q':
+                    start_idx = 0
+                    part_size = q_size_per_rank
+                elif qkv_part == 'k':
+                    start_idx = q_size_per_rank
+                    part_size = kv_size_per_rank
+                else:  # 'v'
+                    start_idx = q_size_per_rank + kv_size_per_rank
+                    part_size = kv_size_per_rank
+
                 end_idx = start_idx + part_size
                 param.data[start_idx:end_idx].copy_(tensor)
                 return True

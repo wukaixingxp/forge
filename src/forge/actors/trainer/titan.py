@@ -408,10 +408,13 @@ class TitanTrainer(ForgeActor):
         1. Skip Python serialization - use CUDA IPC handles (66 bytes vs full tensor)
         2. Skip TorchStore - direct trainer -> generator communication
         3. For non-FSDP: skip state_dict() entirely
-        4. For TP>1: slice tensors and send each worker only its slice
+        4. For TP>1: send handles to all workers (they slice locally)
+        5. **NO all_gather required** - IPC handles work with DTensor local shards
 
-        Note: For FSDP models, this still uses state_dict() to gather shards,
-        but then transfers via IPC instead of serialization.
+        IMPORTANT: Unlike push_weights() which calls full_tensor() to gather
+        FSDP shards (expensive!), IPC handles work directly with DTensor's
+        local storage via dtensor._typed_storage() proxying to ._local_tensor.
+        This bypasses the O(model_size) all_gather collective entirely.
 
         Args:
             policy_version: Version number for these weights
@@ -438,7 +441,10 @@ class TitanTrainer(ForgeActor):
         handle_creation_start = time.perf_counter()
 
         if is_fsdp:
-            logger.info("[IPC] FSDP detected, using state_dict() to gather shards")
+            # NOTE: For FSDP2, state_dict() returns DTensors (sharded, NOT gathered).
+            # IPC handles work directly with the local shard via dtensor._local_tensor,
+            # bypassing the expensive all_gather that baseline push_weights() requires.
+            logger.info("[IPC] FSDP detected, using state_dict() (shards via DTensor)")
             sd = model.state_dict()
             flattened_state_dict, _ = flatten_state_dict(sd)
 
@@ -593,9 +599,61 @@ class TitanTrainer(ForgeActor):
     async def push_weights_sharded(self, policy_version: int) -> dict:
         """Push FSDP shards directly to TorchStore without gathering.
 
-        Each FSDP rank stores its local shard with TensorSlice metadata,
-        enabling slice-aware fetching by generators. This avoids the CPU memory
-        spike from FSDP all_gather and enables GPU-to-GPU RDMA transfers.
+        NOTE: This method is NOT currently used. It's reserved for future
+        MULTI-NODE weight sync where CUDA IPC is not available.
+
+        ┌─────────────────────────────────────────────────────────────────┐
+        │  WHY THIS EXISTS (Multi-Node Weight Sync Without All-Gather)   │
+        └─────────────────────────────────────────────────────────────────┘
+
+        CUDA IPC (push_weights_ipc) only works on SINGLE NODE because IPC
+        handles reference local GPU memory addresses. For multi-node:
+
+        PROBLEM: How to sync weights without expensive all_gather?
+
+        SOLUTION: Sharded push + slice-aware fetch
+
+        ┌─────────────────────────────────────────────────────────────────┐
+        │  TRAINER NODE 0          TRAINER NODE 1                        │
+        │  ┌─────────────┐         ┌─────────────┐                       │
+        │  │ GPU 0       │         │ GPU 2       │                       │
+        │  │ shard_0     │         │ shard_1     │                       │
+        │  └─────┬───────┘         └─────┬───────┘                       │
+        │        │                       │                               │
+        │        │ put_slice()           │ put_slice()                   │
+        │        │ (with TensorSlice     │ (with TensorSlice             │
+        │        │  metadata)            │  metadata)                    │
+        │        ▼                       ▼                               │
+        │  ┌─────────────────────────────────────────┐                   │
+        │  │           TORCHSTORE (distributed)      │                   │
+        │  │  key: "v1/layer.0.weight"               │                   │
+        │  │  ├── slice[0]: shard_0, offsets=(0,0)   │                   │
+        │  │  └── slice[1]: shard_1, offsets=(N/2,0) │                   │
+        │  └─────────────────────────────────────────┘                   │
+        │                       │                                        │
+        │                       │ get_slice() or get_assembled()         │
+        │                       ▼                                        │
+        │  ┌─────────────────────────────────────────┐                   │
+        │  │           GENERATOR NODE                │                   │
+        │  │  Option A: Fetch all slices, assemble   │                   │
+        │  │  Option B: Fetch only needed slice      │                   │
+        │  │            (if generator also sharded)  │                   │
+        │  └─────────────────────────────────────────┘                   │
+        └─────────────────────────────────────────────────────────────────┘
+
+        KEY INSIGHT: Each FSDP rank pushes ONLY its local shard with metadata
+        about where it fits in the global tensor. No rank needs to see the
+        full tensor, avoiding the O(model_size) all_gather collective.
+
+        REQUIREMENTS TO COMPLETE THIS FEATURE:
+        1. TorchStore needs get_assembled() or similar to reconstruct from slices
+        2. Generator needs fetch_weights_sharded() to handle slice assembly
+        3. For multi-node RDMA: TorchStore transport needs GPU-direct RDMA support
+
+        ALTERNATIVE APPROACHES FOR MULTI-NODE:
+        1. NCCL send/recv: Point-to-point GPU transfers (requires careful scheduling)
+        2. GPU-Direct RDMA: InfiniBand/RoCE for direct GPU-to-GPU across nodes
+        3. Checkpoint-based: Write shards to shared filesystem, generator reads
 
         Args:
             policy_version: Version number for these weights.

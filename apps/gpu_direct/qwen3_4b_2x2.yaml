@@ -87,13 +87,7 @@ trainer:
     expert_parallel_degree: 1
     disable_loss_parallel: true
   checkpoint:
-    enable: true
-    initial_load_path: hf://${model}
-    initial_load_in_hf: true
-    folder: ./checkpoint_4b_test
-    last_save_in_hf: true
-    interval: 50
-    async_mode: "disabled"
+    enable: false  # Disable for benchmark runs to avoid DCP loading issues with FSDP
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
