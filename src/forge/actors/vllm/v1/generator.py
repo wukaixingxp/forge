@@ -582,6 +582,69 @@ class Generator(ForgeActor):
             await self.llm.resume_generation()
         logger.info(f"GPU-direct weight update complete, now v{version}")
 
+    @endpoint
+    async def update_weights_ipc(
+        self,
+        version: int,
+        trainer,  # Reference to TitanTrainer actor
+    ) -> dict:
+        """Update weights using CUDA IPC direct transfer from trainer.
+
+        This is Phase 2 optimization that bypasses TorchStore entirely for
+        same-node deployments. The trainer pushes CUDA IPC handles directly
+        to generator workers, enabling GPU-direct memory access without
+        serialization.
+
+        Key optimizations over Phase 1:
+        1. Skip TorchStore entirely - direct trainer -> worker communication
+        2. Skip Python serialization - use 66-byte CUDA IPC handles
+        3. Skip state_dict() on receive - trainer accesses parameters directly
+
+        Args:
+            version: Policy version being pushed
+            trainer: Reference to TitanTrainer actor that will push weights
+
+        Returns:
+            Dict with timing metadata from the push operation
+        """
+        if self.llm is None:
+            raise RuntimeError("Generator not initialized. Call setup() first.")
+
+        logger.info(f"Starting IPC weight update to v{version}")
+
+        pause_start = time.perf_counter()
+        await self.llm.pause_generation(
+            wait_for_inflight_requests=True, clear_cache=True
+        )
+        pause_duration = time.perf_counter() - pause_start
+        record_metric(
+            "generator_perf/update_weights_ipc/pause_generation_duration_s",
+            pause_duration,
+            Reduce.MEAN,
+        )
+
+        try:
+            load_start = time.perf_counter()
+
+            # Trainer pushes weights directly to workers via IPC
+            result = await trainer.push_weights_ipc.call_one(
+                policy_version=version,
+                generator_workers=self.workers,
+            )
+
+            load_duration = time.perf_counter() - load_start
+            record_metric(
+                "generator_perf/update_weights_ipc/worker_load_weights_duration_s",
+                load_duration,
+                Reduce.MEAN,
+            )
+            self.generator_version = version
+        finally:
+            await self.llm.resume_generation()
+
+        logger.info(f"IPC weight update complete, now v{version}")
+        return result
+
     async def _fetch_weights_tp_aware(
         self,
         version: int,

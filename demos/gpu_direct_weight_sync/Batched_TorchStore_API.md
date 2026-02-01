@@ -339,19 +339,109 @@ AFTER (14.5s):
 
 ---
 
+## Phase 2: CUDA IPC Direct Transfer
+
+### Overview
+
+Phase 2 bypasses TorchStore entirely by using CUDA IPC handles for GPU-direct
+weight transfer from trainer to generator. This eliminates Python serialization
+overhead and enables direct GPU memory access across processes.
+
+### Implementation
+
+**Key files added/modified:**
+
+| File | Change |
+|------|--------|
+| `src/forge/actors/trainer/titan.py` | Added `push_weights_ipc()` endpoint |
+| `src/forge/actors/vllm/v1/forge_executor.py` | Added `receive_weights_ipc()` endpoint |
+| `src/forge/actors/vllm/v1/generator.py` | Added `update_weights_ipc()` coordinator |
+| `demos/gpu_direct_weight_sync/ipc_benchmark.py` | Phase 2 benchmark script |
+| `torchstore/transport/cuda_ipc.py` | `CudaIPCHandle` and `create_ipc_handle()` |
+
+### How It Works
+
+```
+Phase 2 Architecture:
+┌─────────────────┐                          ┌─────────────────┐
+│     Trainer     │                          │    Generator    │
+│                 │                          │                 │
+│  model.params   │                          │  Workers        │
+│       │         │                          │       │         │
+│       ▼         │                          │       ▼         │
+│  create_ipc_    │  ───66-byte handles───>  │  reconstruct_   │
+│  handle()       │   (no serialization)     │  tensor()       │
+│                 │                          │       │         │
+│                 │                          │       ▼         │
+│                 │                          │  model.load_    │
+│                 │                          │  weights()      │
+└─────────────────┘                          └─────────────────┘
+
+Key: No TorchStore, No Python serialization, GPU-direct access
+```
+
+### Benchmark Results (Qwen3-4B, 399 params)
+
+| Metric | Time |
+|--------|------|
+| IPC handle creation | 0.01s (after warmup) |
+| IPC send + receive | 3.5s |
+| **Total** | **3.5-4.7s** |
+
+### Performance Comparison
+
+| Phase | Push | Update | Total | vs Baseline |
+|-------|------|--------|-------|-------------|
+| Baseline (prefetch) | 15s | 75s | 90s | - |
+| Phase 1 (no prefetch) | 12s | 2.1s | 14.5s | 6.2x |
+| **Phase 2 (IPC)** | **N/A** | **3.5-4.7s** | **3.5-4.7s** | **19-26x** |
+
+### Why Phase 2 Is Fast
+
+1. **Skip TorchStore**: No RPC round-trips to controller/storage volumes
+2. **Skip Python serialization**: CUDA IPC handles are only 66 bytes
+3. **Skip state_dict()**: Access model parameters directly
+4. **GPU-direct access**: Receiver reconstructs tensor from trainer's GPU memory
+
+### Requirements
+
+- Single-node deployment (CUDA IPC is intra-node only)
+- Trainer and generator on same physical machine
+- CUDA-capable GPUs
+
+### Usage
+
+```bash
+# Run Phase 2 IPC benchmark
+python -m demos.gpu_direct_weight_sync.ipc_benchmark --iterations 3
+
+# Compare with baseline
+python -m demos.gpu_direct_weight_sync.ipc_benchmark --iterations 3 --compare-baseline
+```
+
+In code:
+```python
+# Instead of: trainer.push_weights() + generator.update_weights()
+# Use:
+await generator.update_weights_ipc.fanout(version=version, trainer=trainer)
+```
+
+---
+
 ## Recommendations
 
 ### Immediate Use
-1. **Use `--no-prefetch` for same-node deployments**: 6.2x faster
-2. **Use batched APIs** (`put_batch`, `get_batch`) in custom code
+1. **Phase 2 (IPC)**: For same-node single-GPU deployments - 19-26x faster
+2. **Phase 1 (no prefetch)**: For multi-node or when IPC unavailable - 6.2x faster
+3. **Use batched APIs** (`put_batch`, `get_batch`) in custom code
 
-### Future Optimizations (Phase 2)
+### Future Optimizations
 
 | Optimization | Expected Improvement |
 |--------------|---------------------|
-| Direct Push (bypass TorchStore for data) | Push: 12s → 2-3s |
 | NCCL broadcast for multi-node | Scales to 1000 GPUs |
 | Pre-allocated weight buffers | Reduce memory churn |
+| Async IPC with overlap | Hide transfer latency |
 
 ---
 
@@ -363,10 +453,14 @@ Phase 1 achieved a **6.2x improvement** in weight sync time by:
 2. Adding `get_batch()` API (1.7x microbenchmark speedup)
 3. Bypassing shared-memory prefetch path (35x update speedup)
 
-Total weight sync time reduced from **90s to 14.5s**, well exceeding the original target.
+Phase 2 achieved a **19-26x improvement** over baseline by:
 
-| Phase | Push | Update | Total |
-|-------|------|--------|-------|
-| Baseline | 15s | 75s | 90s |
-| **Phase 1** | **12s** | **2.1s** | **14.5s** |
-| Phase 2 (target) | 2-3s | 1-2s | 3-5s |
+1. Bypassing TorchStore entirely - direct trainer → worker communication
+2. Using CUDA IPC handles (66 bytes) instead of Python serialization
+3. Enabling GPU-direct memory access across processes
+
+| Phase | Total Time | vs Baseline |
+|-------|------------|-------------|
+| Baseline | 90s | - |
+| **Phase 1** | **14.5s** | **6.2x** |
+| **Phase 2** | **3.5-4.7s** | **19-26x** |

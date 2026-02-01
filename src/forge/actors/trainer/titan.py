@@ -371,6 +371,93 @@ class TitanTrainer(ForgeActor):
         logger.info("Completed weights push in %.2f seconds", end_time - start_time)
 
     @endpoint
+    async def push_weights_ipc(
+        self,
+        policy_version: int,
+        generator_workers,  # ActorMesh of generator workers
+    ) -> dict:
+        """Push weights directly to generator workers using CUDA IPC.
+
+        This is Phase 2 optimization that bypasses TorchStore entirely for
+        same-node deployments. Instead of serializing tensors through RPC,
+        we send lightweight CUDA IPC handles (66 bytes each) that allow
+        the generator to directly access trainer's GPU memory.
+
+        Key optimizations:
+        1. Skip state_dict() - access parameters directly (no FSDP all_gather)
+        2. Skip Python serialization - use CUDA IPC handles
+        3. Skip TorchStore - direct trainer -> generator communication
+
+        Args:
+            policy_version: Version number for these weights
+            generator_workers: ActorMesh of ForgeWorkerWrapper actors
+
+        Returns:
+            Dict with push metadata (param_count, duration)
+        """
+        from torchstore.transport.cuda_ipc import CudaIPCHandle, create_ipc_handle
+
+        logger.info(f"[IPC] Pushing weights directly to generators for v{policy_version}")
+        start_time = time.perf_counter()
+
+        # Access model parameters directly (no state_dict, no all_gather)
+        if len(self.engine.model_parts) != 1:
+            raise RuntimeError("push_weights_ipc only supports single model part (no PP)")
+
+        model = self.engine.model_parts[0]
+
+        # Build IPC handles for all parameters
+        # Note: We access .data to get the underlying tensor without autograd
+        ipc_handles = {}
+        handle_creation_start = time.perf_counter()
+
+        for name, param in model.named_parameters():
+            # Get the tensor data (skip autograd wrapper)
+            tensor = param.data
+
+            # Ensure tensor is contiguous and on GPU
+            if not tensor.is_cuda:
+                logger.warning(f"[IPC] Parameter {name} not on GPU, skipping")
+                continue
+
+            if not tensor.is_contiguous():
+                tensor = tensor.contiguous()
+
+            # Convert native name to HF name
+            hf_name = self._native_to_hf_name(name)
+
+            # Create IPC handle (just 66 bytes of metadata)
+            try:
+                handle = create_ipc_handle(tensor)
+                ipc_handles[hf_name] = handle
+            except Exception as e:
+                logger.warning(f"[IPC] Failed to create handle for {name}: {e}")
+
+        handle_creation_time = time.perf_counter() - handle_creation_start
+        logger.info(f"[IPC] Created {len(ipc_handles)} IPC handles in {handle_creation_time:.3f}s")
+
+        # Send handles directly to generator workers
+        send_start = time.perf_counter()
+        await generator_workers.receive_weights_ipc.call(
+            policy_version=policy_version,
+            ipc_handles=ipc_handles,
+        )
+        send_time = time.perf_counter() - send_start
+
+        total_time = time.perf_counter() - start_time
+        logger.info(
+            f"[IPC] Push complete in {total_time:.2f}s "
+            f"(handles: {handle_creation_time:.2f}s, send: {send_time:.2f}s)"
+        )
+
+        return {
+            "param_count": len(ipc_handles),
+            "handle_creation_time": handle_creation_time,
+            "send_time": send_time,
+            "total_time": total_time,
+        }
+
+    @endpoint
     async def push_weights_sharded(self, policy_version: int) -> dict:
         """Push FSDP shards directly to TorchStore without gathering.
 

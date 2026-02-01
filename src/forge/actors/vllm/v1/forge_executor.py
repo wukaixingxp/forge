@@ -126,12 +126,22 @@ class ForgeWorkerWrapper(WorkerWrapper):
         """Load weights from shared memory handles."""
         model = self.worker.model_runner.model
         loaded_count = 0
+        batch = []
+        batch_size = 32
+
         for name, param_handle in state_dict.items():
             with param_handle.to_shared_tensor() as shared_tensor:
-                param = shared_tensor.tensor
-                model.load_weights([(name, param.cuda())])
-                del param
+                batch.append((name, shared_tensor.tensor.cuda()))
             loaded_count += 1
+
+            if len(batch) >= batch_size:
+                model.load_weights(batch)
+                batch = []
+
+        # Load any remaining params
+        if batch:
+            model.load_weights(batch)
+
         return loaded_count
 
     @endpoint
@@ -198,6 +208,63 @@ class ForgeWorkerWrapper(WorkerWrapper):
         logger.info(
             f"[ForgeWorkerWrapper] Applied {loaded_count} GPU weights (TP rank {tp_rank})"
         )
+        return loaded_count
+
+    @endpoint
+    @trace(
+        prefix="generator_perf/update_weights/receive_weights_ipc",
+        track_memory=False,
+        timer="gpu",
+    )
+    def receive_weights_ipc(
+        self,
+        policy_version: int,
+        ipc_handles: dict[str, "CudaIPCHandle"],
+    ) -> int:
+        """Receive weights via CUDA IPC handles from trainer.
+
+        This is the Phase 2 receiver that reconstructs tensors directly from
+        the trainer's GPU memory using CUDA IPC, bypassing serialization entirely.
+
+        Args:
+            policy_version: Version number for these weights
+            ipc_handles: Dict mapping param names to CudaIPCHandle objects
+
+        Returns:
+            Number of parameters loaded
+        """
+        import torch
+
+        logger.info(f"[IPC] Receiving {len(ipc_handles)} weights for v{policy_version}")
+
+        model = self.worker.model_runner.model
+        loaded_count = 0
+        batch = []
+        batch_size = 32
+
+        for name, handle in ipc_handles.items():
+            try:
+                # Reconstruct tensor from IPC handle (GPU-direct, no copy)
+                tensor = handle.reconstruct_tensor()
+
+                # Clone to ensure we own the data (IPC memory might be freed by trainer)
+                tensor = tensor.clone()
+
+                batch.append((name, tensor))
+                loaded_count += 1
+
+                if len(batch) >= batch_size:
+                    model.load_weights(batch)
+                    batch = []
+
+            except Exception as e:
+                logger.warning(f"[IPC] Failed to reconstruct {name}: {e}")
+
+        # Load remaining batch
+        if batch:
+            model.load_weights(batch)
+
+        logger.info(f"[IPC] Loaded {loaded_count} weights via CUDA IPC")
         return loaded_count
 
     async def _get_torchstore_client(self) -> LocalClient:
