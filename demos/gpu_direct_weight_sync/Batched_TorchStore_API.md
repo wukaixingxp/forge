@@ -8,8 +8,8 @@ This document summarizes the implementation of batched TorchStore APIs (`put_bat
 
 ```bash
 # To restore this state:
-torchstore: c468cc2  # Add put_batch() API for batched tensor storage
-torchforge: dc1a9ad  # Use batched ts.put_batch() in trainer push_weights
+torchstore: 1e75533  # Add batched controller notification for put_batch
+torchforge: 411f24e  # Update Phase 1 summary with put_batch results
 ```
 
 ---
@@ -137,8 +137,8 @@ python -m demos.gpu_direct_weight_sync.baseline_1x1 --no-prefetch
 
 | Operation | Sequential | Batched | Speedup |
 |-----------|------------|---------|---------|
-| **PUT** | 1.05s (21ms/param) | 0.23s (4.6ms/param) | **4.6x** |
-| **GET** | 0.63s (12.7ms/param) | 0.37s (7.4ms/param) | **1.7x** |
+| **PUT** | 1.01s (20ms/param) | 0.19s (3.9ms/param) | **5.2x** |
+| **GET** | 0.67s (13ms/param) | 0.37s (7.4ms/param) | **1.8x** |
 
 ### Full Benchmark Results (Qwen3-4B, 399 params)
 
@@ -158,32 +158,65 @@ python -m demos.gpu_direct_weight_sync.baseline_1x1 --no-prefetch
 
 ---
 
-## Why Push Is Still 12 Seconds
+## Why Push Is Still 12-14 Seconds
 
-Despite `put_batch()` showing 4.6x speedup in microbenchmarks, the full push only improved 20%. Here's the breakdown:
+Despite `put_batch()` showing 5.2x speedup in microbenchmarks, the full push time remains ~12-14s. Here's the detailed analysis:
 
-### Push Time Breakdown
+### Microbenchmark vs Full Benchmark
 
-| Component | Time | % of Total |
-|-----------|------|------------|
-| `model.state_dict()` | ~2s | 16% |
-| HF format conversion | ~1s | 8% |
-| `put_batch()` (batched) | ~8s | 65% |
-| Controller notifications | ~1s | 8% |
-| **Total** | **~12s** | 100% |
+| Benchmark | Tensors | Data Size | Batched Time | Speedup |
+|-----------|---------|-----------|--------------|---------|
+| Micro | 50 × 4MB | 200MB | 0.19s | **5.2x** |
+| Full | 399 × ~8MB | ~3.2GB | ~10s | ~1.5x |
 
-### Why Not Faster?
+### Push Time Breakdown (Full Benchmark)
 
-1. **State dict extraction is sequential**: `model.state_dict()` must gather all FSDP shards
-2. **Each tensor still serialized individually**: The batch parallelizes RPC calls, but each tensor is still serialized separately
-3. **Storage volume writes are still per-tensor**: The storage volume processes each put individually
+```
+push_weights() total: ~14s
+├── model.state_dict()     ~2-3s  (15-20%)  ← Sequential FSDP gather
+├── HF format conversion   ~1s    (7%)      ← Name mapping
+├── put_batch() execution  ~10s   (70%)     ← Parallelized but large data
+│   ├── asyncio.gather (storage RPCs)  ~9s
+│   └── notify_put_batch (1 RPC)       ~1s
+└── Other overhead         ~1s    (8%)
+```
 
-### Further Optimization (Future Work)
+### Why put_batch() Is Still Slow
 
-To reduce push time to <3s would require:
-- Batch serialization on the storage volume (single RPC for all tensors)
-- Pre-allocated buffers to avoid tensor copies
-- Direct GPU-to-GPU push (Phase 2: Direct Pull architecture)
+The batching optimizations we made:
+1. ✅ **Parallel storage RPCs**: Using `asyncio.gather` for all 399 puts
+2. ✅ **Batched controller notification**: Single RPC instead of 399
+
+But these bottlenecks remain:
+1. **Each tensor is serialized individually**: Monarch RPC serializes each tensor separately
+2. **Large tensor serialization**: 399 tensors × ~8MB = ~3.2GB to serialize
+3. **Python GIL**: Serialization is CPU-bound and affected by GIL
+4. **Network/IPC bandwidth**: Even with NVLink, moving 3.2GB takes time
+
+### What Would Help
+
+| Optimization | Expected Impact | Complexity |
+|--------------|-----------------|------------|
+| Skip state_dict (use flat params) | -2s | Medium |
+| Skip HF conversion | -1s | Low |
+| Pre-serialized tensor cache | -5s | High |
+| Direct GPU memory sharing | -8s | Very High |
+
+### The Real Bottleneck
+
+```python
+# Current flow (each tensor serialized separately):
+for tensor in tensors:
+    serialized = pickle.dumps(tensor)  # CPU-bound, GIL
+    await rpc.send(serialized)         # I/O
+
+# Ideal flow (not currently possible):
+all_data = cuda_ipc.share_memory(tensors)  # GPU-direct
+await rpc.send(handle_only)                 # Just metadata
+```
+
+To achieve <3s push would require bypassing Python serialization entirely
+and using GPU-direct memory sharing (Phase 2: Direct Pull architecture).
 
 ---
 
