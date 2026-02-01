@@ -4,12 +4,13 @@ End-to-end GRPO training example with GPU-direct weight synchronization using CU
 
 ## Performance Comparison
 
-| Method | Weight Sync Time | Speedup |
-|--------|-----------------|---------|
-| TorchStore (baseline) | ~10s | 1x |
-| **CUDA IPC (this)** | **~1.3s** | **~8x** |
+| Metric | Baseline (RPC) | CUDA IPC | Speedup |
+|--------|----------------|----------|---------|
+| Weight sync time | ~38s | 10.6s | **3.6x** |
+| Data transfer | 24s | 0.9s | **26x** |
+| Total step time | 47.6s | 11.0s | **4.3x** |
 
-*Results from Qwen3-4B with FSDP=2 trainer + TP=2 generator*
+*Results from Qwen3-4B 1x1 config on H200 GPUs. See [docs/blog.md](docs/blog.md) for detailed analysis.*
 
 ## Quick Start
 
@@ -136,7 +137,7 @@ apps/gpu_direct/
 
 ## Related Documentation
 
-- `demos/gpu_direct_weight_sync/summary.md` - Full technical documentation
-- `demos/gpu_direct_weight_sync/phase2_summary.md` - Phase 2 implementation details
+- [docs/blog.md](docs/blog.md) - Technical blog post with detailed analysis
+- [docs/diagrams/](docs/diagrams/) - Architecture diagrams (Excalidraw)
 - `src/forge/actors/trainer/titan.py` - `push_weights_ipc()` implementation
 - `src/forge/actors/vllm/v1/generator.py` - `update_weights_ipc()` implementation
