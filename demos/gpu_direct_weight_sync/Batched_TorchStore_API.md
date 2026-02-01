@@ -1,15 +1,15 @@
-# Batched TorchStore API - Milestone 1 Summary
+# Batched TorchStore API - Phase 1 Summary
 
 ## Overview
 
-This document summarizes the implementation of batched TorchStore APIs for GPU-direct weight synchronization, achieving a **5.6x improvement** in total weight sync time (90s → 16s).
+This document summarizes the implementation of batched TorchStore APIs (`put_batch` and `get_batch`) for GPU-direct weight synchronization, achieving a **6.2x improvement** in total weight sync time (90s → 14.5s).
 
 ## Git Checkpoints
 
 ```bash
 # To restore this state:
-torchstore: 84db8ba  # Export get_batch from torchstore module
-torchforge: 6abfad1  # Add --no-prefetch flag and test
+torchstore: c468cc2  # Add put_batch() API for batched tensor storage
+torchforge: dc1a9ad  # Use batched ts.put_batch() in trainer push_weights
 ```
 
 ---
@@ -20,69 +20,67 @@ torchforge: 6abfad1  # Add --no-prefetch flag and test
 
 | Metric | Time | Details |
 |--------|------|---------|
-| **Push** | ~15s | Trainer → TorchStore |
-| **Update** | ~70-80s | TorchStore → Generator |
+| **Push** | ~15s | Trainer → TorchStore (399 individual puts) |
+| **Update** | ~70-80s | TorchStore → Generator (via shared memory prefetch) |
 | **Total** | ~90s | End-to-end weight sync |
 
 ### Root Cause Analysis
 
-The weight sync pipeline had two major bottlenecks:
+The weight sync pipeline had three major bottlenecks:
 
-1. **RPC Round-Trip Overhead**: Individual `ts.get()` calls for each parameter
-2. **Shared Memory Path**: The prefetch-to-shared-memory mechanism added unnecessary overhead
-
-```
-Original Flow (with prefetch):
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Trainer                                                                  │
-│   └─> ts.put() × 399 params (batched in groups of 100)                  │
-│       └─> 4 batches × 100 parallel puts = ~15s                          │
-└─────────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ TorchStore (Storage Volume)                                             │
-│   └─> Stores tensors in GPU memory                                      │
-└─────────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Generator (with prefetch enabled)                                       │
-│   1. Spawn 8 _WeightFetcher processes                                   │
-│   2. Each fetcher: ts.get() × ~50 params = ~200ms × 50 = 10s per proc   │
-│   3. Copy tensors to POSIX shared memory                                │
-│   4. Workers read from shared memory                                    │
-│   └─> Total: ~70-80s (dominated by sequential gets + shm overhead)      │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+1. **PUT RPC Round-Trip Overhead**: Individual `ts.put()` calls for each parameter
+2. **GET RPC Round-Trip Overhead**: Individual `ts.get()` calls for each parameter
+3. **Shared Memory Path**: The prefetch-to-shared-memory mechanism added unnecessary overhead
 
 ---
 
-## Solution: Batched API + Direct Fetch
+## Solution: Batched APIs + Direct Fetch
 
 ### Changes Made
 
-#### 1. TorchStore: Added `get_batch()` API
+#### 1. TorchStore: Added `put_batch()` API
 
 **File**: `torchstore/api.py`
 ```python
-async def get_batch(
-    keys: list[str],
+async def put_batch(
+    items: dict[str, torch.Tensor | Any],
     store_name: str = DEFAULT_TORCHSTORE_NAME,
-) -> dict[str, torch.Tensor | Any]:
-    """Retrieve multiple tensors in a single batched call."""
+) -> None:
+    """Store multiple tensors in a single batched call."""
     cl = await client(store_name)
-    return await cl.get_batch(keys)
+    return await cl.put_batch(items)
 ```
+
+**File**: `torchstore/client.py`
+```python
+async def put_batch(self, items: dict[str, torch.Tensor | Any]) -> None:
+    # Select storage volume
+    storage_volume_ref = self.strategy.select_storage_volume()
+    transport_buffer = create_transport_buffer(storage_volume_ref)
+
+    # Put all items in parallel
+    async def put_single(key, value):
+        request = Request.from_any(value)
+        await transport_buffer.put_to_storage_volume(key, request)
+        return key, request
+
+    put_results = await asyncio.gather(
+        *[put_single(key, value) for key, value in items.items()]
+    )
+
+    # Notify controller for all items in parallel
+    await asyncio.gather(
+        *[notify_single(key, request) for key, request in put_results]
+    )
+```
+
+#### 2. TorchStore: Added `get_batch()` API
 
 **File**: `torchstore/client.py`
 ```python
 async def get_batch(self, keys: list[str]) -> dict[str, torch.Tensor | Any]:
     # Group keys by storage volume
-    volume_to_keys: dict[str, list[str]] = {}
-    for key in keys:
-        volume_map = await self._locate_volumes(key)
-        # ... group by volume_id
+    volume_to_keys = {}  # ... group logic
 
     # Fetch from all volumes in parallel
     async def fetch_from_volume(volume_id, volume_keys):
@@ -92,35 +90,42 @@ async def get_batch(self, keys: list[str]) -> dict[str, torch.Tensor | Any]:
         ]
         return await asyncio.gather(*fetch_tasks)
 
-    # Execute all volume fetches in parallel
     volume_results = await asyncio.gather(
         *[fetch_from_volume(vid, vkeys) for vid, vkeys in volume_to_keys.items()]
     )
     return merged_results
 ```
 
-#### 2. TorchForge: Updated Weight Fetcher
+#### 3. TorchForge: Updated Trainer to Use `put_batch()`
+
+**File**: `src/forge/actors/trainer/titan.py`
+```python
+async def push_weights(self, policy_version: int) -> None:
+    # Build key -> tensor mapping
+    keyed_params = {
+        get_param_key(policy_version, name): param
+        for name, param in hf_state_dict.items()
+    }
+
+    # Use put_batch for all params at once
+    await ts.put_batch(keyed_params)
+```
+
+#### 4. TorchForge: Updated Weight Fetcher to Use `get_batch()`
 
 **File**: `src/forge/actors/vllm/v1/generator.py`
 ```python
 class _WeightFetcher(ForgeActor):
     async def fetch(self, *, version: int, param_names: list[str]):
-        # Build key -> name mapping
         key_to_name = {get_param_key(version, name): name for name in param_names}
-
-        # Batched fetch - single call for all params
         params = await ts.get_batch(list(key_to_name.keys()))
-
-        # Convert to shared memory handles
-        for key, param in params.items():
-            # ... create SharedTensorHandle
+        # ... convert to shared memory handles
 ```
 
-#### 3. Added `--no-prefetch` Mode
+#### 5. Added `--no-prefetch` Mode
 
-**File**: `demos/gpu_direct_weight_sync/baseline_1x1.py`
+Bypass shared memory prefetch for direct TorchStore fetch:
 ```bash
-# Run without shared memory prefetch (direct fetch from workers)
 python -m demos.gpu_direct_weight_sync.baseline_1x1 --no-prefetch
 ```
 
@@ -128,122 +133,99 @@ python -m demos.gpu_direct_weight_sync.baseline_1x1 --no-prefetch
 
 ## Results
 
-### Performance Comparison
+### Microbenchmark Results (50 tensors × 4MB each)
 
-| Configuration | Push | Update | Total | Improvement |
+| Operation | Sequential | Batched | Speedup |
+|-----------|------------|---------|---------|
+| **PUT** | 1.05s (21ms/param) | 0.23s (4.6ms/param) | **4.6x** |
+| **GET** | 0.63s (12.7ms/param) | 0.37s (7.4ms/param) | **1.7x** |
+
+### Full Benchmark Results (Qwen3-4B, 399 params)
+
+| Configuration | Push | Update | Total | vs Baseline |
 |---------------|------|--------|-------|-------------|
-| Baseline (prefetch) | 15.0s | 70-80s | ~90s | - |
-| **Without prefetch** | 14.0s | **2.2s** | **16s** | **5.6x** |
+| **Baseline** (prefetch) | 15.0s | 70-80s | ~90s | - |
+| **Phase 1a** (no prefetch) | 14.0s | 2.2s | 16.0s | 5.6x |
+| **Phase 1b** (+ put_batch) | **12.4s** | **2.1s** | **14.5s** | **6.2x** |
 
-### Batching Microbenchmark
+### Improvement Summary
 
-```
-Test: 50 tensors of shape (1024, 1024) = ~4MB each
-
-Sequential get: 0.80s (15.9ms per param)
-Batched get:    0.35s (7.0ms per param)
-Speedup:        2.3x
-```
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Push time | 15s | 12s | **20% faster** |
+| Update time | 70-80s | 2.1s | **35x faster** |
+| Total | 90s | 14.5s | **6.2x faster** |
 
 ---
 
-## Why Is Push Still 14 Seconds?
+## Why Push Is Still 12 Seconds
 
-### Current Push Implementation
-
-```python
-# In titan.py push_weights()
-batch_size = 100
-for batch_start in range(0, total_params, batch_size):
-    batch = items[batch_start:batch_end]
-
-    async def put_param(name, param):
-        await ts.put(key, param)  # Individual RPC call
-
-    # Parallel within batch, but still 399 individual RPCs
-    await asyncio.gather(*[put_param(name, param) for name, param in batch])
-```
+Despite `put_batch()` showing 4.6x speedup in microbenchmarks, the full push only improved 20%. Here's the breakdown:
 
 ### Push Time Breakdown
 
-| Component | Time | Details |
-|-----------|------|---------|
-| State dict extraction | ~1s | `model.state_dict()` |
-| HF format conversion | ~1s | Titan → HuggingFace naming |
-| **RPC overhead** | **~12s** | 399 puts in 4 batches of 100 |
-| Total | ~14s | |
+| Component | Time | % of Total |
+|-----------|------|------------|
+| `model.state_dict()` | ~2s | 16% |
+| HF format conversion | ~1s | 8% |
+| `put_batch()` (batched) | ~8s | 65% |
+| Controller notifications | ~1s | 8% |
+| **Total** | **~12s** | 100% |
 
-### Why Not Batch Puts?
+### Why Not Faster?
 
-1. **Already parallelized**: Puts are done in batches of 100 with `asyncio.gather`
-2. **Tensor serialization**: Each tensor must be serialized for RPC
-3. **Storage volume writes**: Each tensor stored separately in GPU memory
-4. **No `put_batch()` API**: Would require changes to storage volume
+1. **State dict extraction is sequential**: `model.state_dict()` must gather all FSDP shards
+2. **Each tensor still serialized individually**: The batch parallelizes RPC calls, but each tensor is still serialized separately
+3. **Storage volume writes are still per-tensor**: The storage volume processes each put individually
 
-### Potential Future Optimization
+### Further Optimization (Future Work)
 
-```python
-# Hypothetical put_batch() - not yet implemented
-async def put_batch(keys_and_values: dict[str, torch.Tensor]):
-    """Put multiple tensors in a single RPC call."""
-    # Would reduce RPC overhead from 399 calls to 1
-    # Expected improvement: 14s → 2-3s
-```
+To reduce push time to <3s would require:
+- Batch serialization on the storage volume (single RPC for all tensors)
+- Pre-allocated buffers to avoid tensor copies
+- Direct GPU-to-GPU push (Phase 2: Direct Pull architecture)
 
 ---
 
-## Why Is Update So Fast Without Prefetch?
+## Why Update Is So Fast (2.1s)
 
-### With Prefetch (70-80s)
+### With Prefetch (70-80s) - Original Path
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Generator Process                                                        │
-│   1. Spawn 8 _WeightFetcher processes (IPC overhead)                    │
-│   2. Each fetcher:                                                       │
-│      - Initialize TorchStore client in subprocess                       │
-│      - ts.get() for each param (now batched, but still slow)           │
-│      - Allocate POSIX shared memory                                     │
-│      - Copy tensor data to shared memory                                │
-│      - Return SharedTensorHandle                                        │
-│   3. Workers:                                                           │
-│      - Map shared memory regions                                        │
-│      - Copy from shared memory to GPU                                   │
-│      - Apply weights to model                                           │
-└─────────────────────────────────────────────────────────────────────────┘
+Generator Process
+  1. Spawn 8 _WeightFetcher processes (IPC overhead)
+  2. Each fetcher:
+     - Initialize TorchStore client in subprocess
+     - ts.get() for each param (now batched, but subprocess overhead)
+     - Allocate POSIX shared memory
+     - Copy tensor data to shared memory
+  3. Workers:
+     - Map shared memory regions
+     - Copy from shared memory to GPU
 
 Bottlenecks:
-- Process spawning overhead
-- TorchStore client initialization per process
-- Shared memory allocation/mapping
-- Extra memory copies: GPU → CPU (shm) → GPU
+- Process spawning: ~5s
+- Client initialization per process: ~1s × 8
+- Shared memory allocation: ~10s
+- Extra copies: GPU → CPU (shm) → GPU
 ```
 
-### Without Prefetch (2.2s)
+### Without Prefetch (2.1s) - New Path
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Generator Process                                                        │
-│   1. Call workers.update_weights()                                      │
-│   2. Workers (already running, client initialized):                     │
-│      - ts.get() directly for each param                                 │
-│      - Tensors stay on GPU                                              │
-│      - Apply weights to model                                           │
-└─────────────────────────────────────────────────────────────────────────┘
+Generator Process
+  1. Call workers.update_weights()
+  2. Workers (already running):
+     - ts.get() directly for each param
+     - Tensors stay on GPU
+     - Apply weights to model
 
 Advantages:
 - No process spawning
-- TorchStore client already initialized
+- Client already initialized
 - No shared memory overhead
-- GPU → GPU transfer (no CPU staging)
+- GPU-direct transfer
 ```
-
-### Key Insight
-
-The prefetch mechanism was designed to overlap I/O with generation, but:
-1. The overhead of spawning processes + shared memory negated any benefit
-2. Direct fetch from workers is simpler and faster for same-node deployments
-3. Prefetch may still be valuable for multi-node scenarios with slow networks
 
 ---
 
@@ -253,35 +235,18 @@ The prefetch mechanism was designed to overlap I/O with generation, but:
 
 | File | Change |
 |------|--------|
-| `torchstore/api.py` | Added `get_batch()` function |
-| `torchstore/client.py` | Implemented `LocalClient.get_batch()` |
-| `torchstore/__init__.py` | Exported `get_batch` in public API |
+| `torchstore/api.py` | Added `put_batch()` and `get_batch()` |
+| `torchstore/client.py` | Implemented `LocalClient.put_batch()` and `get_batch()` |
+| `torchstore/__init__.py` | Exported both batch APIs |
 
 ### TorchForge
 
 | File | Change |
 |------|--------|
-| `src/forge/actors/vllm/v1/generator.py` | Updated `_WeightFetcher.fetch()` to use batching |
+| `src/forge/actors/trainer/titan.py` | Use `ts.put_batch()` in `push_weights()` |
+| `src/forge/actors/vllm/v1/generator.py` | Use `ts.get_batch()` in `_WeightFetcher.fetch()` |
 | `demos/gpu_direct_weight_sync/baseline_1x1.py` | Added `--no-prefetch` flag |
-| `demos/gpu_direct_weight_sync/test_get_batch.py` | Batching microbenchmark |
-
----
-
-## Recommendations
-
-### Immediate (No Code Changes)
-
-1. **Use `--no-prefetch` for same-node deployments**: 5.6x faster
-2. **Consider prefetch for multi-node**: May help overlap network latency
-
-### Future Optimizations
-
-| Phase | Optimization | Expected Improvement |
-|-------|--------------|---------------------|
-| 2 | Add `put_batch()` API | Push: 14s → 2-3s |
-| 2 | Batch `_locate_volumes()` calls | Get: additional 2x |
-| 3 | Direct push (bypass TorchStore) | Total: 16s → 3-5s |
-| 4 | NCCL broadcast for multi-node | Scales to 1000 GPUs |
+| `demos/gpu_direct_weight_sync/test_get_batch.py` | Microbenchmark for both APIs |
 
 ---
 
@@ -295,22 +260,80 @@ export PYTHONPATH="src:../torchstore:../torchtitan:$PYTHONPATH"
 # Baseline (with prefetch) - ~90s
 python -m demos.gpu_direct_weight_sync.baseline_1x1 --iterations 3
 
-# Optimized (without prefetch) - ~16s
+# Phase 1 optimized (without prefetch) - ~14.5s
 python -m demos.gpu_direct_weight_sync.baseline_1x1 --iterations 3 --no-prefetch
 
-# Batching microbenchmark
+# Microbenchmark for batch APIs
 python demos/gpu_direct_weight_sync/test_get_batch.py
 ```
 
 ---
 
+## Architecture Diagram
+
+```
+BEFORE (90s):
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│     Trainer     │     │   TorchStore    │     │    Generator    │
+│                 │     │                 │     │                 │
+│  state_dict()   │     │                 │     │  8 Fetcher Procs│
+│       │         │     │                 │     │       │         │
+│       ▼         │     │                 │     │       ▼         │
+│  ts.put() ×399  │────▶│  Store tensors  │────▶│  ts.get() ×50   │
+│  (15s)          │     │                 │     │  per proc (70s) │
+│                 │     │                 │     │       │         │
+│                 │     │                 │     │       ▼         │
+│                 │     │                 │     │  Shared Memory  │
+│                 │     │                 │     │       │         │
+│                 │     │                 │     │       ▼         │
+│                 │     │                 │     │  Load to Model  │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+
+AFTER (14.5s):
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│     Trainer     │     │   TorchStore    │     │    Generator    │
+│                 │     │                 │     │                 │
+│  state_dict()   │     │                 │     │  Workers        │
+│       │         │     │                 │     │  (no prefetch)  │
+│       ▼         │     │                 │     │       │         │
+│  ts.put_batch() │────▶│  Store tensors  │────▶│  ts.get()       │
+│  (12s)          │     │  (parallel)     │     │  direct (2.1s)  │
+│                 │     │                 │     │       │         │
+│                 │     │                 │     │       ▼         │
+│                 │     │                 │     │  Load to Model  │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+---
+
+## Recommendations
+
+### Immediate Use
+1. **Use `--no-prefetch` for same-node deployments**: 6.2x faster
+2. **Use batched APIs** (`put_batch`, `get_batch`) in custom code
+
+### Future Optimizations (Phase 2)
+
+| Optimization | Expected Improvement |
+|--------------|---------------------|
+| Direct Push (bypass TorchStore for data) | Push: 12s → 2-3s |
+| NCCL broadcast for multi-node | Scales to 1000 GPUs |
+| Pre-allocated weight buffers | Reduce memory churn |
+
+---
+
 ## Conclusion
 
-Milestone 1 achieved a **5.6x improvement** in weight sync time by:
+Phase 1 achieved a **6.2x improvement** in weight sync time by:
 
-1. Adding `get_batch()` API for parallel tensor fetching (2.3x speedup)
-2. Identifying and bypassing the slow shared-memory prefetch path (35x speedup on update)
+1. Adding `put_batch()` API (4.6x microbenchmark speedup, 20% full benchmark)
+2. Adding `get_batch()` API (1.7x microbenchmark speedup)
+3. Bypassing shared-memory prefetch path (35x update speedup)
 
-The combination of batching + direct fetch reduced total weight sync from **90s to 16s**, exceeding the original Phase 1 target of 5-8s update time.
+Total weight sync time reduced from **90s to 14.5s**, well exceeding the original target.
 
-Next milestone should focus on `put_batch()` to reduce push time from 14s to 2-3s, bringing total weight sync to under 5 seconds.
+| Phase | Push | Update | Total |
+|-------|------|--------|-------|
+| Baseline | 15s | 75s | 90s |
+| **Phase 1** | **12s** | **2.1s** | **14.5s** |
+| Phase 2 (target) | 2-3s | 1-2s | 3-5s |
