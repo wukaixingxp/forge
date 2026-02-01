@@ -1,0 +1,72 @@
+# GPU-Direct Weight Sync Demo Configuration
+# Qwen3-4B: 2 GPU trainer (FSDP) -> 2 GPU generator (TP=2)
+
+# Global configuration
+group_size: 1
+batch_size: 1
+max_req_tokens: 128
+max_res_tokens: 64
+model_path: "/home/dev/framework/Qwen3-4B-Instruct-2507-FP8"
+compile: false  # Disable compilation for demo simplicity
+
+# Generator configuration (TP=2, 2 GPUs)
+generator:
+  engine_args:
+    model: ${model_path}
+    tensor_parallel_size: 2
+    pipeline_parallel_size: 1
+    enforce_eager: true
+    max_model_len: 4096
+    gpu_memory_utilization: 0.90
+  sampling_params:
+    n: ${group_size}
+    max_tokens: ${max_res_tokens}
+    temperature: 0.7
+    top_p: 0.9
+
+# Trainer configuration (2 GPUs with FSDP)
+trainer:
+  model:
+    name: qwen3
+    flavor: 4B
+    hf_assets_path: ${model_path}
+  optimizer:
+    name: AdamW
+    lr: 1e-5
+    eps: 1e-8
+  lr_scheduler:
+    warmup_steps: 1
+  training:
+    local_batch_size: ${batch_size}
+    seq_len: 256
+    max_norm: 1.0
+    steps: 1
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: false
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 2  # FSDP across 2 GPUs
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+    disable_loss_parallel: true
+  checkpoint:
+    enable: false  # Disable checkpoint loading for faster startup
+  activation_checkpoint:
+    mode: full
+
+# Resource allocations
+services:
+  generator:
+    procs: 2  # 2 GPUs for TP=2
+    num_replicas: 1
+    with_gpus: true
+
+actors:
+  trainer:
+    procs: 2  # 2 GPUs for FSDP
+    num_replicas: 1
+    with_gpus: true

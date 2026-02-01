@@ -586,7 +586,7 @@ class Generator(ForgeActor):
     async def update_weights_ipc(
         self,
         version: int,
-        trainer,  # Reference to TitanTrainer actor
+        trainer,  # Reference to TitanTrainer actor (may be multi-rank for FSDP)
     ) -> dict:
         """Update weights using CUDA IPC direct transfer from trainer.
 
@@ -598,11 +598,14 @@ class Generator(ForgeActor):
         Key optimizations over Phase 1:
         1. Skip TorchStore entirely - direct trainer -> worker communication
         2. Skip Python serialization - use 66-byte CUDA IPC handles
-        3. Skip state_dict() on receive - trainer accesses parameters directly
+        3. For non-FSDP: skip state_dict() entirely on trainer
+
+        Note: For FSDP trainers (multi-GPU), only rank 0 performs the push
+        after gathering shards via state_dict().
 
         Args:
             version: Policy version being pushed
-            trainer: Reference to TitanTrainer actor that will push weights
+            trainer: Reference to TitanTrainer actor (may be multi-rank mesh)
 
         Returns:
             Dict with timing metadata from the push operation
@@ -626,11 +629,29 @@ class Generator(ForgeActor):
         try:
             load_start = time.perf_counter()
 
-            # Trainer pushes weights directly to workers via IPC
-            result = await trainer.push_weights_ipc.call_one(
-                policy_version=version,
-                generator_workers=self.workers,
-            )
+            # For FSDP trainers (multi-rank), we need to call rank 0 which will
+            # gather shards and send. For single-rank trainers, call directly.
+            # ActorMesh uses _shape.ndslice.sizes to get dimensions
+            try:
+                trainer_ndslice = trainer._shape.ndslice
+                trainer_procs = trainer_ndslice.sizes[0] if trainer_ndslice.sizes else 1
+            except (AttributeError, IndexError):
+                trainer_procs = 1
+
+            if trainer_procs > 1:
+                # Multi-rank trainer (FSDP) - select rank 0
+                logger.info(f"[IPC] Multi-rank trainer detected ({trainer_procs} procs), calling rank 0")
+                trainer_rank0 = trainer.slice(procs=0)
+                result = await trainer_rank0.push_weights_ipc.call_one(
+                    policy_version=version,
+                    generator_workers=self.workers,
+                )
+            else:
+                # Single-rank trainer
+                result = await trainer.push_weights_ipc.call_one(
+                    policy_version=version,
+                    generator_workers=self.workers,
+                )
 
             load_duration = time.perf_counter() - load_start
             record_metric(

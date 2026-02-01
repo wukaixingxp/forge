@@ -11,9 +11,10 @@ and using CUDA IPC handles for cross-process GPU memory access. This achieves a
 ```bash
 # To restore this state:
 torchstore: 1e75533  # Add batched controller notification for put_batch
-torchforge: 022b6fd  # Final checkpoint update for Phase 2
+torchforge: 8ac1001  # Add FSDP support to Phase 2 IPC
 
 # Key commits:
+# torchforge: 8ac1001  # Add FSDP support (single-GPU generator only)
 # torchforge: 063fce1  # Implement Phase 2: CUDA IPC direct weight transfer
 # torchforge: 9967369  # Phase 1 docs update
 ```
@@ -184,8 +185,11 @@ await generator.update_weights_ipc.fanout(version=version, trainer=trainer)
 ## Limitations
 
 1. **Single-node only**: CUDA IPC doesn't work across network
-2. **No FSDP support yet**: Currently requires single trainer GPU (no PP)
+2. **No TP generator support yet**: Works with 1x1 config (1 trainer GPU, 1 generator GPU)
+   - For FSDP trainers (multi-GPU): Works with single-GPU generator only
+   - For TP generators: Requires tensor slicing per TP rank (not yet implemented)
 3. **Memory lifetime**: Trainer must keep tensors alive until transfer completes
+4. **PP not supported**: Pipeline parallel trainers not yet supported
 
 ---
 

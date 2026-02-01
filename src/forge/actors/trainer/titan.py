@@ -384,9 +384,12 @@ class TitanTrainer(ForgeActor):
         the generator to directly access trainer's GPU memory.
 
         Key optimizations:
-        1. Skip state_dict() - access parameters directly (no FSDP all_gather)
-        2. Skip Python serialization - use CUDA IPC handles
-        3. Skip TorchStore - direct trainer -> generator communication
+        1. Skip Python serialization - use CUDA IPC handles (66 bytes vs full tensor)
+        2. Skip TorchStore - direct trainer -> generator communication
+        3. For non-FSDP: skip state_dict() entirely
+
+        Note: For FSDP models, this still uses state_dict() to gather shards,
+        but then transfers via IPC instead of serialization.
 
         Args:
             policy_version: Version number for these weights
@@ -395,43 +398,76 @@ class TitanTrainer(ForgeActor):
         Returns:
             Dict with push metadata (param_count, duration)
         """
-        from torchstore.transport.cuda_ipc import CudaIPCHandle, create_ipc_handle
+        from torchstore.transport.cuda_ipc import create_ipc_handle
 
         logger.info(f"[IPC] Pushing weights directly to generators for v{policy_version}")
         start_time = time.perf_counter()
 
-        # Access model parameters directly (no state_dict, no all_gather)
         if len(self.engine.model_parts) != 1:
             raise RuntimeError("push_weights_ipc only supports single model part (no PP)")
 
         model = self.engine.model_parts[0]
 
+        # Check if this is an FSDP model by looking at parallelism config
+        is_fsdp = self.parallelism.data_parallel_shard_degree > 1
+
         # Build IPC handles for all parameters
-        # Note: We access .data to get the underlying tensor without autograd
         ipc_handles = {}
         handle_creation_start = time.perf_counter()
 
-        for name, param in model.named_parameters():
-            # Get the tensor data (skip autograd wrapper)
-            tensor = param.data
+        if is_fsdp:
+            # For FSDP, we need to gather shards first via state_dict()
+            # state_dict() triggers all_gather under the hood
+            logger.info("[IPC] FSDP detected, using state_dict() to gather shards")
+            sd = model.state_dict()
+            flattened_state_dict, _ = flatten_state_dict(sd)
 
-            # Ensure tensor is contiguous and on GPU
-            if not tensor.is_cuda:
-                logger.warning(f"[IPC] Parameter {name} not on GPU, skipping")
-                continue
+            # Convert to HF format
+            sd_adapter = getattr(self.engine.checkpointer, 'sd_adapter', None)
+            if sd_adapter is not None:
+                hf_state_dict = sd_adapter.to_hf(flattened_state_dict)
+            else:
+                hf_state_dict = {
+                    self._native_to_hf_name(name): param
+                    for name, param in flattened_state_dict.items()
+                }
 
-            if not tensor.is_contiguous():
-                tensor = tensor.contiguous()
+            # Create IPC handles from gathered tensors
+            for hf_name, tensor in hf_state_dict.items():
+                if not tensor.is_cuda:
+                    logger.warning(f"[IPC] Parameter {hf_name} not on GPU, skipping")
+                    continue
 
-            # Convert native name to HF name
-            hf_name = self._native_to_hf_name(name)
+                if not tensor.is_contiguous():
+                    tensor = tensor.contiguous()
 
-            # Create IPC handle (just 66 bytes of metadata)
-            try:
-                handle = create_ipc_handle(tensor)
-                ipc_handles[hf_name] = handle
-            except Exception as e:
-                logger.warning(f"[IPC] Failed to create handle for {name}: {e}")
+                try:
+                    handle = create_ipc_handle(tensor)
+                    ipc_handles[hf_name] = handle
+                except Exception as e:
+                    logger.warning(f"[IPC] Failed to create handle for {hf_name}: {e}")
+
+            # Keep state dict alive until transfer completes
+            self._ipc_state_dict = hf_state_dict
+        else:
+            # For non-FSDP, access parameters directly (no all_gather needed)
+            for name, param in model.named_parameters():
+                tensor = param.data
+
+                if not tensor.is_cuda:
+                    logger.warning(f"[IPC] Parameter {name} not on GPU, skipping")
+                    continue
+
+                if not tensor.is_contiguous():
+                    tensor = tensor.contiguous()
+
+                hf_name = self._native_to_hf_name(name)
+
+                try:
+                    handle = create_ipc_handle(tensor)
+                    ipc_handles[hf_name] = handle
+                except Exception as e:
+                    logger.warning(f"[IPC] Failed to create handle for {name}: {e}")
 
         handle_creation_time = time.perf_counter() - handle_creation_start
         logger.info(f"[IPC] Created {len(ipc_handles)} IPC handles in {handle_creation_time:.3f}s")
@@ -444,6 +480,10 @@ class TitanTrainer(ForgeActor):
         )
         send_time = time.perf_counter() - send_start
 
+        # Clean up state dict reference after transfer
+        if hasattr(self, '_ipc_state_dict'):
+            del self._ipc_state_dict
+
         total_time = time.perf_counter() - start_time
         logger.info(
             f"[IPC] Push complete in {total_time:.2f}s "
@@ -455,6 +495,7 @@ class TitanTrainer(ForgeActor):
             "handle_creation_time": handle_creation_time,
             "send_time": send_time,
             "total_time": total_time,
+            "is_fsdp": is_fsdp,
         }
 
     @endpoint
