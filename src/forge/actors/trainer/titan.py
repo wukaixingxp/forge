@@ -375,6 +375,7 @@ class TitanTrainer(ForgeActor):
         self,
         policy_version: int,
         generator_workers,  # ActorMesh of generator workers
+        tp_size: int = 1,  # Tensor parallel size of generator
     ) -> dict:
         """Push weights directly to generator workers using CUDA IPC.
 
@@ -387,6 +388,7 @@ class TitanTrainer(ForgeActor):
         1. Skip Python serialization - use CUDA IPC handles (66 bytes vs full tensor)
         2. Skip TorchStore - direct trainer -> generator communication
         3. For non-FSDP: skip state_dict() entirely
+        4. For TP>1: slice tensors and send each worker only its slice
 
         Note: For FSDP models, this still uses state_dict() to gather shards,
         but then transfers via IPC instead of serialization.
@@ -394,13 +396,14 @@ class TitanTrainer(ForgeActor):
         Args:
             policy_version: Version number for these weights
             generator_workers: ActorMesh of ForgeWorkerWrapper actors
+            tp_size: Tensor parallel size of generator (default 1)
 
         Returns:
             Dict with push metadata (param_count, duration)
         """
         from torchstore.transport.cuda_ipc import create_ipc_handle
 
-        logger.info(f"[IPC] Pushing weights directly to generators for v{policy_version}")
+        logger.info(f"[IPC] Pushing weights directly to generators for v{policy_version} (TP={tp_size})")
         start_time = time.perf_counter()
 
         if len(self.engine.model_parts) != 1:
@@ -411,18 +414,14 @@ class TitanTrainer(ForgeActor):
         # Check if this is an FSDP model by looking at parallelism config
         is_fsdp = self.parallelism.data_parallel_shard_degree > 1
 
-        # Build IPC handles for all parameters
-        ipc_handles = {}
+        # Get full state dict (handles FSDP gather if needed)
         handle_creation_start = time.perf_counter()
 
         if is_fsdp:
-            # For FSDP, we need to gather shards first via state_dict()
-            # state_dict() triggers all_gather under the hood
             logger.info("[IPC] FSDP detected, using state_dict() to gather shards")
             sd = model.state_dict()
             flattened_state_dict, _ = flatten_state_dict(sd)
 
-            # Convert to HF format
             sd_adapter = getattr(self.engine.checkpointer, 'sd_adapter', None)
             if sd_adapter is not None:
                 hf_state_dict = sd_adapter.to_hf(flattened_state_dict)
@@ -431,58 +430,84 @@ class TitanTrainer(ForgeActor):
                     self._native_to_hf_name(name): param
                     for name, param in flattened_state_dict.items()
                 }
+        else:
+            # For non-FSDP, access parameters directly
+            hf_state_dict = {}
+            for name, param in model.named_parameters():
+                tensor = param.data
+                if not tensor.is_cuda:
+                    continue
+                hf_name = self._native_to_hf_name(name)
+                hf_state_dict[hf_name] = tensor
 
-            # Create IPC handles from gathered tensors
+        # Build IPC handles - slice for TP if needed
+        if tp_size > 1:
+            # For TP>1, create per-rank sliced handles
+            # Structure: {param_name: {tp_rank: handle}}
+            ipc_handles_per_rank = {tp_rank: {} for tp_rank in range(tp_size)}
+            sliced_tensors = {}  # Keep tensors alive
+
             for hf_name, tensor in hf_state_dict.items():
                 if not tensor.is_cuda:
-                    logger.warning(f"[IPC] Parameter {hf_name} not on GPU, skipping")
                     continue
-
                 if not tensor.is_contiguous():
                     tensor = tensor.contiguous()
 
+                # vLLM's weight loaders (QKVParallelLinear, RowParallelLinear, etc.)
+                # expect full tensors and handle TP slicing internally. We should NOT
+                # pre-slice tensors ourselves - send full tensors to all ranks.
+                try:
+                    handle = create_ipc_handle(tensor)
+                    for tp_rank in range(tp_size):
+                        ipc_handles_per_rank[tp_rank][hf_name] = handle
+                except Exception as e:
+                    logger.warning(f"[IPC] Failed to create handle for {hf_name}: {e}")
+
+            # Keep tensors alive until transfer completes
+            self._ipc_state_dict = hf_state_dict
+            self._ipc_sliced_tensors = sliced_tensors
+
+            handle_creation_time = time.perf_counter() - handle_creation_start
+            logger.info(f"[IPC] Created {len(hf_state_dict)} params × {tp_size} TP ranks in {handle_creation_time:.3f}s")
+
+            # Send handles to each worker with its TP rank
+            send_start = time.perf_counter()
+            await generator_workers.receive_weights_ipc_sliced.call(
+                policy_version=policy_version,
+                ipc_handles_per_rank=ipc_handles_per_rank,
+            )
+            send_time = time.perf_counter() - send_start
+        else:
+            # For TP=1, send full tensors (original behavior)
+            ipc_handles = {}
+            for hf_name, tensor in hf_state_dict.items():
+                if not tensor.is_cuda:
+                    continue
+                if not tensor.is_contiguous():
+                    tensor = tensor.contiguous()
                 try:
                     handle = create_ipc_handle(tensor)
                     ipc_handles[hf_name] = handle
                 except Exception as e:
                     logger.warning(f"[IPC] Failed to create handle for {hf_name}: {e}")
 
-            # Keep state dict alive until transfer completes
             self._ipc_state_dict = hf_state_dict
-        else:
-            # For non-FSDP, access parameters directly (no all_gather needed)
-            for name, param in model.named_parameters():
-                tensor = param.data
 
-                if not tensor.is_cuda:
-                    logger.warning(f"[IPC] Parameter {name} not on GPU, skipping")
-                    continue
+            handle_creation_time = time.perf_counter() - handle_creation_start
+            logger.info(f"[IPC] Created {len(ipc_handles)} IPC handles in {handle_creation_time:.3f}s")
 
-                if not tensor.is_contiguous():
-                    tensor = tensor.contiguous()
+            send_start = time.perf_counter()
+            await generator_workers.receive_weights_ipc.call(
+                policy_version=policy_version,
+                ipc_handles=ipc_handles,
+            )
+            send_time = time.perf_counter() - send_start
 
-                hf_name = self._native_to_hf_name(name)
-
-                try:
-                    handle = create_ipc_handle(tensor)
-                    ipc_handles[hf_name] = handle
-                except Exception as e:
-                    logger.warning(f"[IPC] Failed to create handle for {name}: {e}")
-
-        handle_creation_time = time.perf_counter() - handle_creation_start
-        logger.info(f"[IPC] Created {len(ipc_handles)} IPC handles in {handle_creation_time:.3f}s")
-
-        # Send handles directly to generator workers
-        send_start = time.perf_counter()
-        await generator_workers.receive_weights_ipc.call(
-            policy_version=policy_version,
-            ipc_handles=ipc_handles,
-        )
-        send_time = time.perf_counter() - send_start
-
-        # Clean up state dict reference after transfer
+        # Clean up state dict references after transfer
         if hasattr(self, '_ipc_state_dict'):
             del self._ipc_state_dict
+        if hasattr(self, '_ipc_sliced_tensors'):
+            del self._ipc_sliced_tensors
 
         total_time = time.perf_counter() - start_time
         logger.info(
@@ -491,12 +516,58 @@ class TitanTrainer(ForgeActor):
         )
 
         return {
-            "param_count": len(ipc_handles),
+            "param_count": len(hf_state_dict),
             "handle_creation_time": handle_creation_time,
             "send_time": send_time,
             "total_time": total_time,
             "is_fsdp": is_fsdp,
+            "tp_size": tp_size,
         }
+
+    def _get_tp_sharding_type(self, param_name: str) -> str:
+        """Determine TP sharding type for a parameter based on its name."""
+        column_parallel_patterns = [
+            "q_proj", "k_proj", "v_proj", "qkv_proj",
+            "gate_proj", "up_proj", "gate_up_proj",
+        ]
+        row_parallel_patterns = ["o_proj", "down_proj"]
+        vocab_parallel_patterns = ["embed_tokens", "lm_head"]
+
+        param_lower = param_name.lower()
+
+        for pattern in column_parallel_patterns:
+            if pattern in param_lower:
+                return "column_parallel"
+        for pattern in row_parallel_patterns:
+            if pattern in param_lower:
+                return "row_parallel"
+        for pattern in vocab_parallel_patterns:
+            if pattern in param_lower:
+                return "vocab_parallel"
+
+        return "replicated"
+
+    def _slice_tensor_for_tp(
+        self,
+        tensor: torch.Tensor,
+        shard_type: str,
+        tp_rank: int,
+        tp_size: int,
+    ) -> torch.Tensor:
+        """Slice a tensor for a specific TP rank."""
+        if shard_type == "column_parallel":
+            # Shard columns (dim=1)
+            col_size = tensor.shape[1] // tp_size
+            return tensor[:, tp_rank * col_size : (tp_rank + 1) * col_size]
+        elif shard_type == "row_parallel":
+            # Shard rows (dim=0)
+            row_size = tensor.shape[0] // tp_size
+            return tensor[tp_rank * row_size : (tp_rank + 1) * row_size, :]
+        elif shard_type == "vocab_parallel":
+            # Shard vocab dimension (dim=0)
+            vocab_size = tensor.shape[0] // tp_size
+            return tensor[tp_rank * vocab_size : (tp_rank + 1) * vocab_size, :]
+        return tensor
 
     @endpoint
     async def push_weights_sharded(self, policy_version: int) -> dict:
@@ -679,6 +750,42 @@ class TitanTrainer(ForgeActor):
                 # For DTensors, param.shape gives global shape
                 param_shapes[hf_name] = tuple(param.shape)
         return param_shapes
+
+    @endpoint
+    async def add_noise_to_weights(self, noise_scale: float = 0.01) -> dict:
+        """Add noise to model weights for testing weight sync.
+
+        This is a test utility to verify that weight updates are working correctly.
+        After calling this, the trainer's weights will be different from the
+        generator's weights until sync is performed.
+
+        Args:
+            noise_scale: Standard deviation of Gaussian noise to add
+
+        Returns:
+            Dict with statistics about the noise added
+        """
+        import torch
+
+        logger.info(f"[TitanTrainer] Adding noise (scale={noise_scale}) to weights for testing")
+
+        num_params = 0
+        total_noise = 0.0
+
+        for model_part in self.engine.model_parts:
+            for name, param in model_part.named_parameters():
+                with torch.no_grad():
+                    noise = torch.randn_like(param.data) * noise_scale
+                    param.data.add_(noise)
+                    num_params += 1
+                    total_noise += noise.abs().mean().item()
+
+        logger.info(f"[TitanTrainer] Added noise to {num_params} parameters")
+        return {
+            "num_params": num_params,
+            "avg_noise": total_noise / num_params if num_params > 0 else 0,
+            "noise_scale": noise_scale,
+        }
 
     @endpoint
     async def cleanup(self) -> None:

@@ -74,8 +74,19 @@ def _build_worker_configs(
         - all_envs: List of env var dicts, one per worker
         - all_kwargs: List of init kwargs dicts, one per worker
     """
+    # Check for IPC-compatible mode which requires visibility to all GPUs
+    # This is needed when using CUDA IPC for weight sync from trainer to generator
+    ipc_mode = os.environ.get("FORGE_IPC_GPU_VISIBILITY", "0") == "1"
+
     # Use allocated GPU IDs if provided, else fallback to sequential
-    if gpu_ids:
+    if ipc_mode:
+        # IPC mode: don't restrict CUDA_VISIBLE_DEVICES so workers can access
+        # trainer's GPU memory via CUDA IPC handles
+        import torch
+        total_gpus = torch.cuda.device_count()
+        cuda_devices = ",".join(str(i) for i in range(total_gpus))
+        logger.info(f"[MonarchExecutor] IPC mode enabled, using all GPUs: {cuda_devices}")
+    elif gpu_ids:
         cuda_devices = ",".join(gpu_ids)
     else:
         cuda_devices = ",".join(str(i) for i in range(gpus_per_host))
@@ -85,7 +96,13 @@ def _build_worker_configs(
     all_envs = []
     all_kwargs = []
     for rank in range(world_size):
-        local_rank = rank % gpus_per_host
+        # In IPC mode, workers can see all GPUs but should use their allocated ones
+        # local_rank maps to the actual GPU device index
+        if ipc_mode and gpu_ids:
+            # Use the actual GPU ID from allocation
+            local_rank = int(gpu_ids[rank % len(gpu_ids)])
+        else:
+            local_rank = rank % gpus_per_host
         is_driver = rank % tp_size == 0  # First worker in each TP group
 
         # Environment variables for PyTorch distributed

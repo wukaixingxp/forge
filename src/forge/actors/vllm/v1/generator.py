@@ -638,6 +638,10 @@ class Generator(ForgeActor):
             except (AttributeError, IndexError):
                 trainer_procs = 1
 
+            # Get generator's TP size for proper slicing
+            tp_size = self.vllm_config.parallel_config.tensor_parallel_size
+            logger.info(f"[IPC] Generator TP size: {tp_size}")
+
             if trainer_procs > 1:
                 # Multi-rank trainer (FSDP) - select rank 0
                 logger.info(f"[IPC] Multi-rank trainer detected ({trainer_procs} procs), calling rank 0")
@@ -645,12 +649,14 @@ class Generator(ForgeActor):
                 result = await trainer_rank0.push_weights_ipc.call_one(
                     policy_version=version,
                     generator_workers=self.workers,
+                    tp_size=tp_size,
                 )
             else:
                 # Single-rank trainer
                 result = await trainer.push_weights_ipc.call_one(
                     policy_version=version,
                     generator_workers=self.workers,
+                    tp_size=tp_size,
                 )
 
             load_duration = time.perf_counter() - load_start
@@ -848,6 +854,20 @@ class Generator(ForgeActor):
         """Validate updated model params using validate_fn."""
         logger.info("start validating model parameters.")
         return await self.workers.validate_model_params.call(validate_fn)
+
+    @endpoint
+    async def get_sample_weights(self) -> dict[str, dict]:
+        """Get sample weights from the model for validation.
+
+        Returns a dict with sample parameter statistics (mean, std, shape)
+        to verify weight updates without transferring full tensors.
+        """
+        # Get from rank 0 only (all TP ranks should have same values for replicated params)
+        results = await self.workers.slice(procs=0).get_sample_weights.call()
+        # ValueMesh is a dict-like object, iterate to get the single value
+        for coord, value in results:
+            return value
+        return {}
 
     def _extract_logprobs(self, output) -> torch.Tensor | None:
         """Extract logprobs from vLLM output as a torch.Tensor.
