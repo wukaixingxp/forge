@@ -338,24 +338,34 @@ class TitanTrainer(ForgeActor):
                 for name, param in flattened_state_dict.items()
             }
 
-        # Use parallel puts for better performance (batched to avoid overwhelming TorchStore)
-        import asyncio
-        batch_size = 100  # Process 100 params concurrently
-        items = list(hf_state_dict.items())
-        total_params = len(items)
+        # Use batched put for better performance
+        total_params = len(hf_state_dict)
 
-        for batch_start in range(0, total_params, batch_size):
-            batch_end = min(batch_start + batch_size, total_params)
-            batch = items[batch_start:batch_end]
+        # Build key -> tensor mapping
+        keyed_params = {
+            get_param_key(policy_version, name): param
+            for name, param in hf_state_dict.items()
+        }
 
-            async def put_param(name: str, param: torch.Tensor) -> None:
-                key = get_param_key(policy_version, name)
-                await ts.put(key, param)
+        # Use put_batch for all params at once
+        try:
+            await ts.put_batch(keyed_params)
+        except AttributeError:
+            # Fallback for older torchstore without put_batch
+            logger.warning("ts.put_batch not available, falling back to individual puts")
+            import asyncio
+            batch_size = 100
+            items = list(keyed_params.items())
+            for batch_start in range(0, total_params, batch_size):
+                batch_end = min(batch_start + batch_size, total_params)
+                batch = items[batch_start:batch_end]
 
-            await asyncio.gather(*[put_param(name, param) for name, param in batch])
+                async def put_param(key: str, param: torch.Tensor) -> None:
+                    await ts.put(key, param)
 
-            if batch_start % 500 == 0:
-                logger.info(f"Push progress: {batch_end}/{total_params} params")
+                await asyncio.gather(*[put_param(key, param) for key, param in batch])
+
+        logger.info(f"Push progress: {total_params}/{total_params} params")
 
         end_time = time.perf_counter()
         logger.info("Completed weights push in %.2f seconds", end_time - start_time)
