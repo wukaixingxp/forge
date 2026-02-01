@@ -4,27 +4,25 @@ Weight synchronization between trainer and generator was killing our RL training
 
 ---
 
-## TL;DR: Where Does Your Training Time Go?
+## TL;DR: Weight Sync Was the Bottleneck
 
 ![Training Breakdown](diagrams/00-tldr-training-breakdown.excalidraw)
 
-**One GRPO training step on Qwen3-4B (4x H200 GPUs):**
+**Weight sync time comparison on Qwen3-4B (4x H200 GPUs):**
 
 ```
 BEFORE (Per-Tensor RPC):
-├── Generation         45s  ████████████████████████████████████████
-├── Training           25s  ██████████████████████████
-├── Weight Sync       >57s  ████████████████████████████████████████████████████████  BROKEN!
-├── Other               3s  ███
-└── TOTAL:           >130s
+└── Weight Sync       >57s  ████████████████████████████████████████████████████████  BROKEN!
+    ├── Push           27s  (800 individual RPC calls)
+    └── Fetch         >30s  (timeout - crashed before completing)
 
 AFTER (CUDA IPC):
-├── Generation         45s  ████████████████████████████████████████
-├── Training           25s  ██████████████████████████
-├── Weight Sync        10s  ██████████  ← 5-6x FASTER
-├── Other               3s  ███
-└── TOTAL:            ~82s
+└── Weight Sync        10s  ██████████  ← 5-6x FASTER
+    ├── Pause Gen       7s  (waiting for in-flight requests)
+    └── GPU Transfer    3s  (actual data movement)
 ```
+
+**Why this matters:** In online RL, the trainer can't update weights it's sending, and the generator can't use weights it hasn't received. At >57s per sync (often crashing), weight sync was blocking the entire pipeline.
 
 ### The Numbers (Verified from Benchmark Logs)
 
