@@ -4,35 +4,41 @@ Weight synchronization between trainer and generator was killing our RL training
 
 ---
 
-## TL;DR: Weight Sync Was the Bottleneck
+## TL;DR: 4.3x Faster Training Steps
 
 ![Training Breakdown](diagrams/00-tldr-training-breakdown.excalidraw)
 
-**Weight sync time comparison on Qwen3-4B (4x H200 GPUs):**
+**Steady-state training step comparison on Qwen3-4B (4x H200 GPUs):**
 
 ```
-BEFORE (Per-Tensor RPC):
-└── Weight Sync       >57s  ████████████████████████████████████████████████████████  BROKEN!
-    ├── Push           27s  (800 individual RPC calls)
-    └── Fetch         >30s  (timeout - crashed before completing)
+BASELINE (TorchStore RPC) - Step 2:
+├── train_step         0.4s  █
+├── update_weights    31.2s  ███████████████████████████████  ← BOTTLENECK
+│   ├── pause_gen      7.6s  ████████
+│   └── worker_load   23.6s  ████████████████████████  (RPC transfer)
+└── TOTAL:            47.6s
 
-AFTER (CUDA IPC):
-└── Weight Sync        10s  ██████████  ← 5-6x FASTER
-    ├── Pause Gen       7s  (waiting for in-flight requests)
-    └── GPU Transfer    3s  (actual data movement)
+CUDA IPC - Step 2:
+├── train_step         0.4s  █
+├── update_weights    10.6s  ███████████  ← 3x FASTER
+│   ├── pause_gen      9.7s  ██████████
+│   └── worker_load    0.9s  █  (GPU-direct transfer, 26x faster!)
+└── TOTAL:            11.0s  ← 4.3x FASTER
 ```
 
-**Why this matters:** In online RL, the trainer can't update weights it's sending, and the generator can't use weights it hasn't received. At >57s per sync (often crashing), weight sync was blocking the entire pipeline.
+![Step 2 Breakdown](diagrams/04-step2-breakdown.excalidraw)
 
 ### The Numbers (Verified from Benchmark Logs)
 
-| Approach | Push | Fetch | Total | Speedup | Source |
-|----------|------|-------|-------|---------|--------|
-| Per-tensor RPC | 27s | >30s (timeout) | **>57s** | baseline | `true_baseline_1x1.log` |
-| Batched RPC | 14s | 8s | **~22s** | 2.6x | `phase1_batched_rpc_1x1.log` |
-| **CUDA IPC** | — | — | **~10s** | **5-6x** | `ipc_1x1.log` |
+| Metric | Baseline | IPC | Speedup |
+|--------|----------|-----|---------|
+| **Total step time** | 47.6s | 11.0s | **4.3x** |
+| Weight sync | 31.2s | 10.6s | **2.9x** |
+| └─ pause_generation | 7.6s | 9.7s | ~same |
+| └─ worker_load (transfer) | 23.6s | 0.9s | **26x** |
+| train_step | 0.4s | 0.4s | ~same |
 
-**Key insight:** The IPC total of ~10s includes 7s of unavoidable `pause_generation` (waiting for in-flight requests). The actual GPU transfer is only **~3s**.
+**Key insight:** The actual data transfer (`worker_load_weights`) went from 23.6s to 0.9s — **26x faster**. The `pause_generation` time is unavoidable (waiting for in-flight requests), but the GPU-direct transfer is nearly instant.
 
 ---
 
