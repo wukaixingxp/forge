@@ -840,6 +840,9 @@ class _WeightFetcher(ForgeActor):
     ) -> dict[str, SharedTensorHandle]:
         """Fetch weights from torchstore and load them into shared memory.
 
+        Uses batched API (ts.get_batch) to minimize RPC round-trips.
+        Falls back to sequential fetch if batched API is unavailable.
+
         Args:
             version: Policy version
             param_names: List of parameter names to fetch
@@ -847,11 +850,27 @@ class _WeightFetcher(ForgeActor):
         Returns:
             Dict mapping param names to SharedTensorHandle objects
         """
-
-        sd = {}
+        # Build key -> name mapping for batched fetch
+        key_to_name = {}
         for name in param_names:
             param_key = get_param_key(version, name)
-            param = await ts.get(param_key)
+            key_to_name[param_key] = name
+
+        # Batched fetch - single RPC call for all params
+        keys = list(key_to_name.keys())
+        try:
+            params = await ts.get_batch(keys)
+        except AttributeError:
+            # Fallback for older torchstore without get_batch
+            logger.warning("ts.get_batch not available, falling back to sequential fetch")
+            params = {}
+            for key in keys:
+                params[key] = await ts.get(key)
+
+        # Convert to shared memory handles
+        sd = {}
+        for key, param in params.items():
+            name = key_to_name[key]
             shared_tensor = SharedTensor(tensor=param)
             handle = shared_tensor.get_handle()
             # Unregister from resource tracker - Generator will handle cleanup via drop()
@@ -861,4 +880,5 @@ class _WeightFetcher(ForgeActor):
             sd[name] = handle
             shared_tensor.close()  # Close fd but don't unlink (workers will use it)
             del param  # Explicitly free the tensor after copying to shared memory
+
         return sd
