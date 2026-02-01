@@ -79,6 +79,7 @@ async def run_baseline_benchmark(
     num_iterations: int = 3,
     load_checkpoint: bool = False,
     transport: str = "auto",
+    prefetch: bool = True,
 ):
     """Run baseline weight sync benchmark."""
     from forge.actors.trainer import TitanTrainer
@@ -119,6 +120,7 @@ async def run_baseline_benchmark(
     print(f"Iterations: {num_iterations}")
     print(f"Load checkpoint: {load_checkpoint}")
     print(f"Transport: {transport_type.name}")
+    print(f"Prefetch to SHM: {prefetch}")
     print("-" * 70)
     print("Transport Availability:")
     for name, available in transport_availability.items():
@@ -148,9 +150,12 @@ async def run_baseline_benchmark(
 
     # Launch generator
     print("\n[3/5] Launching Generator...")
-    generator_cfg = cfg.generator
+    generator_cfg = dict(cfg.generator)
     services_generator_cfg = cfg.services.generator
     services_generator_cfg.num_replicas = 1
+
+    # Control prefetch behavior
+    generator_cfg["prefetch_weights_to_shm"] = prefetch
 
     try:
         generator = await Generator.options(**services_generator_cfg).as_service(**generator_cfg)
@@ -292,6 +297,11 @@ def main():
         choices=["auto", "MonarchRPC", "MonarchRDMA", "TorchCommsRDMA", "CudaIPC"],
         help="Transport type (default: auto - detect best available)",
     )
+    parser.add_argument(
+        "--no-prefetch",
+        action="store_true",
+        help="Disable prefetch to shared memory (direct TorchStore fetch instead)",
+    )
     args = parser.parse_args()
 
     asyncio.run(run_baseline_benchmark(
@@ -299,6 +309,7 @@ def main():
         num_iterations=args.iterations,
         load_checkpoint=args.load_checkpoint,
         transport=args.transport,
+        prefetch=not args.no_prefetch,
     ))
 
 
