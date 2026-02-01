@@ -1,4 +1,4 @@
-# Optimizing RL Weight Sync: 5x Faster with CUDA IPC
+# Optimizing RL Weight Sync: 3.6x Faster with CUDA IPC
 
 Weight synchronization between trainer and generator was killing our RL training loop. Here's how we fixed it.
 
@@ -55,7 +55,7 @@ Online reinforcement learning has a fundamental loop: **train → sync → gener
       └──────────── new experience ─────────┘
 ```
 
-During weight sync, nothing productive happens. The trainer can't update weights it's sending. The generator can't use weights it hasn't received. At >57 seconds per sync with the baseline approach (and frequent timeouts!), weight sync was dominating our training time.
+During weight sync, nothing productive happens. The trainer can't update weights it's sending. The generator can't use weights it hasn't received. At ~38 seconds per sync with the baseline approach (requiring extended timeouts), weight sync was dominating our training time.
 
 ---
 
@@ -63,21 +63,21 @@ During weight sync, nothing productive happens. The trainer can't update weights
 
 ![Data Flow Comparison](diagrams/01-data-flow-comparison.excalidraw)
 
-### 1. Per-Tensor RPC (Baseline) — Broken
+### 1. Per-Tensor RPC (Baseline) — Slow
 
 ```python
-# 800 individual RPC calls, one per tensor
+# ~400 individual RPC calls, one per tensor
 for name, tensor in model.named_parameters():
-    await storage.put(name, tensor)  # ~33ms overhead per call
+    await storage.put(name, tensor)  # ~35ms overhead per call
 ```
 
 **Data path:** `GPU → CPU → Serialize → Network → Deserialize → CPU → GPU`
 
-**Result:** 27s push + >30s fetch = **>57s total** (often times out)
+**Result:** 14s push + 24s fetch = **~38s total** (requires extended timeout)
 
-The per-tensor fetch exceeded Monarch's default 30s timeout. We had to set `HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT=120s` just to measure it.
+The per-tensor fetch exceeds Monarch's default 30s timeout. Set `HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT=120s` to complete successfully.
 
-### 2. Batched RPC (Phase 1) — 2.6x Faster
+### 2. Batched RPC (Phase 1) — 1.7x Faster
 
 ```python
 # ~8 RPC calls instead of 800
@@ -92,7 +92,7 @@ for batch in batches:
 
 **Code:** Available in `batch_fetch` branch of `~/kai/forge`
 
-### 3. CUDA IPC (Phase 2) — 5-6x Faster
+### 3. CUDA IPC (Phase 2) — 3.6x Faster
 
 ```python
 # Zero-copy GPU-to-GPU transfer
@@ -103,7 +103,7 @@ await generator.receive_handle(handle, shape, dtype)
 
 **Data path:** `GPU ═══════════ GPU` (shared memory, no CPU copies)
 
-**Result:** **~10s total** (7s pause + 3s transfer)
+**Result:** **~10.6s total** (9.7s pause + 0.9s transfer)
 
 ---
 
@@ -153,7 +153,7 @@ $ rm -f /dev/shm/cuda.shm.* /dev/shm/torch_*  # Fix
 
 | Config | Baseline | IPC | Speedup |
 |--------|----------|-----|---------|
-| 1x1 (FSDP=1, TP=1) | >57s (broken) | 10.5s | **5.4x** |
+| 1x1 (FSDP=1, TP=1) | ~38s | 10.6s | **3.6x** |
 | 2x1 (FSDP=2, TP=1) | 45.5s | 9.1s | **5.0x** |
 | 2x2 (FSDP=2, TP=2) | 65.1s | 12.8s | **5.1x** |
 
@@ -166,12 +166,12 @@ $ rm -f /dev/shm/cuda.shm.* /dev/shm/torch_*  # Fix
 The generator must pause and wait for in-flight requests before updating weights:
 
 ```
-IPC Breakdown (10s total):
-├── pause_generation    7s  ████████████████████████  (unavoidable)
-└── IPC transfer        3s  █████████
+IPC Breakdown (10.6s total):
+├── pause_generation  9.7s  ████████████████████████████  (unavoidable)
+└── IPC transfer      0.9s  ███
 ```
 
-This ~7s pause is **unavoidable** regardless of transfer method. It's the time to:
+This ~10s pause is **unavoidable** regardless of transfer method. It's the time to:
 1. Wait for in-flight generation requests to complete
 2. Clear the KV cache before loading new weights
 
@@ -205,13 +205,13 @@ export HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT=120s
 export HYPERACTOR_HOST_SPAWN_READY_TIMEOUT=120s
 ```
 
-### Per-Tensor Baseline (slow, often times out)
+### Per-Tensor Baseline (slow, requires extended timeout)
 
 ```bash
 cd ~/kai/forge && git checkout main
 conda activate baseline
 python -m apps.grpo.main --config apps/grpo/qwen3_4b_1x1.yaml
-# Expected: Push ~27s, Fetch >30s timeout
+# Expected: Push ~14s, Fetch ~24s, Total ~38s
 ```
 
 ### Batched RPC (Phase 1)
@@ -231,7 +231,7 @@ conda activate vllm
 export PYTHONPATH="src:$PYTHONPATH"
 export FORGE_IPC_GPU_VISIBILITY=1
 python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_4b_1x1.yaml
-# Expected: Total ~10s (including ~7s pause)
+# Expected: Total ~10.6s (including ~9.7s pause)
 ```
 
 ---
@@ -252,9 +252,9 @@ All benchmark logs are in `apps/gpu_direct/benchmark_logs/`:
 
 | Log File | What It Measures |
 |----------|------------------|
-| `true_baseline_1x1.log` | Per-tensor RPC: 27s push, >30s fetch timeout |
-| `phase1_batched_rpc_1x1.log` | Batched RPC: 14s push, 8s fetch |
-| `ipc_1x1.log` | IPC: 10.9s total (7.5s pause + 2.8s transfer) |
+| `baseline_step2_1x1.log` | Per-tensor RPC: 14s push, 24s fetch = ~38s |
+| `phase1_batched_rpc_1x1.log` | Batched RPC: 14s push, 8s fetch = ~22s |
+| `ipc_1x1.log` | IPC: 10.6s total (9.7s pause + 0.9s transfer) |
 | `ipc_2x1.log` | IPC with FSDP=2: 9.6s total |
 
 ---
