@@ -7,9 +7,13 @@ This document summarizes the implementation of batched TorchStore APIs (`put_bat
 ## Git Checkpoints
 
 ```bash
-# To restore this state:
+# Phase 1 checkpoint:
 torchstore: 1e75533  # Add batched controller notification for put_batch
-torchforge: 411f24e  # Update Phase 1 summary with put_batch results
+torchforge: 9967369  # Update Phase 1 docs with batched notification and analysis
+
+# Phase 2 checkpoint:
+torchstore: 1e75533  # (same as Phase 1)
+torchforge: 063fce1  # Implement Phase 2: CUDA IPC direct weight transfer
 ```
 
 ---
