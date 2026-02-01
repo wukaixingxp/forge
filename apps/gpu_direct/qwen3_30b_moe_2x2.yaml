@@ -1,0 +1,138 @@
+# GPU-Direct Weight Sync GRPO - Qwen3-30B-A3B (MoE) with CUDA IPC
+# Trainer: 2 GPUs (FSDP), Generator: 2 GPUs (TP=2)
+#
+# NOTE: This is a Mixture of Experts model (30B total, ~3B active params)
+# MoE models have special considerations for parallelism.
+#
+# Usage:
+#   export FORGE_IPC_GPU_VISIBILITY=1
+#   python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_30b_moe_2x2.yaml
+
+# Weight sync configuration
+weight_sync:
+  use_ipc: true  # Enable CUDA IPC direct transfer
+
+# Global configuration
+group_size: 4
+local_batch_size: 1
+max_req_tokens: 512
+max_res_tokens: 512
+model: "Qwen/Qwen3-30B-A3B"
+off_by_n: 1
+compile: false
+
+# Main loop configuration
+rollout_threads: 1
+
+# Observability configuration
+metric_logging:
+  wandb:
+    project: gpu-direct-grpo
+    group: qwen3_30b_moe_ipc_${oc.env:USER}
+    logging_mode: global_reduce
+  console:
+    logging_mode: global_reduce
+
+# Dataset configuration
+dataset:
+  path: "openai/gsm8k"
+  revision: "main"
+  data_split: "train"
+  streaming: true
+  model: ${model}
+
+# Generator configuration (TP=2, 2 GPUs)
+generator:
+  engine_args:
+    model: ${model}
+    tensor_parallel_size: 2
+    pipeline_parallel_size: 1
+    enforce_eager: true
+    max_model_len: 2048
+    gpu_memory_utilization: 0.90
+  sampling_params:
+    n: ${group_size}
+    max_tokens: ${max_res_tokens}
+    temperature: 1.0
+    top_p: 1.0
+    logprobs: 1
+
+# Trainer configuration (FSDP=2, 2 GPUs)
+trainer:
+  model:
+    name: qwen3
+    flavor: 30B-A3B
+    hf_assets_path: hf://${model}
+  optimizer:
+    name: AdamW
+    lr: 1e-5
+    eps: 1e-8
+  lr_scheduler:
+    warmup_steps: 1
+  training:
+    local_batch_size: ${local_batch_size}
+    seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
+    max_norm: 1.0
+    steps: 50
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: false
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 2  # FSDP across 2 GPUs
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+    expert_tensor_parallel_degree: 1
+    disable_loss_parallel: true
+  checkpoint:
+    enable: true
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+    folder: ./checkpoint_30b_moe
+    last_save_in_hf: true
+    interval: 100
+    async_mode: "disabled"
+  activation_checkpoint:
+    mode: full
+  comm:
+    init_timeout_seconds: 1800
+
+# Replay buffer configuration
+replay_buffer:
+  batch_size: ${local_batch_size}
+  max_policy_age: ${off_by_n}
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
+
+# Resource allocations (4 GPUs total)
+services:
+  generator:
+    procs: 2
+    num_replicas: 1
+    with_gpus: true
+    mesh_name: generator
+  reward_actor:
+    procs: 1
+    num_replicas: 1
+    with_gpus: false
+    mesh_name: reward_actor
+
+actors:
+  dataset:
+    procs: 1
+    with_gpus: false
+    mesh_name: dataset
+  trainer:
+    procs: 2
+    with_gpus: true
+    mesh_name: trainer
+  replay_buffer:
+    procs: 1
+    with_gpus: false
+    mesh_name: replay_buffer
+  compute_advantages:
+    procs: 1
+    with_gpus: false
+    mesh_name: compute_advantages

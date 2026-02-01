@@ -314,12 +314,15 @@ class TitanTrainer(ForgeActor):
     @endpoint
     async def push_weights(self, policy_version: int) -> None:
         """Push weights to torchstore in HF format."""
+        from torch.distributed.tensor import DTensor
+
         logger.info(f"Pushing weights for policy version {policy_version}")
 
         start_time = time.perf_counter()
 
         # Get model state dict directly from model_parts (works with or without checkpointing)
-        # Note: For FSDP models, state_dict() triggers all_gather to reconstruct full tensors
+        # NOTE: For FSDP2 models, state_dict() returns DTensors (sharded), NOT full tensors!
+        # We must call .full_tensor() to gather across FSDP ranks before storing.
         if len(self.engine.model_parts) != 1:
             raise RuntimeError("push_weights only supports single model part (no PP)")
 
@@ -338,13 +341,30 @@ class TitanTrainer(ForgeActor):
                 for name, param in flattened_state_dict.items()
             }
 
+        # Convert DTensors to full tensors for TorchStore compatibility
+        # FSDP2 returns DTensors which TorchStore stores as sharded dicts.
+        # TorchStore's get_meta() can't handle this format, causing silent failures.
+        # Solution: Gather full tensors on all ranks, but only rank 0 pushes to TorchStore.
+        gathered_state_dict = {}
+        for name, param in hf_state_dict.items():
+            if isinstance(param, DTensor):
+                # full_tensor() gathers shards across FSDP ranks
+                gathered_state_dict[name] = param.full_tensor()
+            else:
+                gathered_state_dict[name] = param
+
+        # Only rank 0 pushes to TorchStore to avoid duplicate writes
+        if self.engine.dp_rank != 0:
+            logger.info(f"Rank {self.engine.dp_rank} skipping push (only rank 0 pushes)")
+            return
+
         # Use batched put for better performance
-        total_params = len(hf_state_dict)
+        total_params = len(gathered_state_dict)
 
         # Build key -> tensor mapping
         keyed_params = {
             get_param_key(policy_version, name): param
-            for name, param in hf_state_dict.items()
+            for name, param in gathered_state_dict.items()
         }
 
         # Use put_batch for all params at once
