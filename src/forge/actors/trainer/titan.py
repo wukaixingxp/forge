@@ -313,23 +313,35 @@ class TitanTrainer(ForgeActor):
 
     @endpoint
     async def push_weights(self, policy_version: int) -> None:
-        """Push weights to torchstore in HF format."""
+        """Push weights to torchstore in HF format (per-tensor RPC baseline)."""
+        from torch.distributed.tensor import DTensor
+
         logger.info(f"Pushing weights for policy version {policy_version}")
 
         start_time = time.perf_counter()
-        if "model" not in self.engine.checkpointer.states:
-            raise RuntimeError("Model state not found in checkpointer state")
 
-        sd = self.engine.checkpointer.states["model"].state_dict()
+        # Get model state dict directly from model_parts (works with or without checkpointing)
+        if len(self.engine.model_parts) != 1:
+            raise RuntimeError("push_weights only supports single model part (no PP)")
+
+        sd = self.engine.model_parts[0].state_dict()
         flattened_state_dict, _ = flatten_state_dict(sd)
-        if self.engine.checkpointer.sd_adapter is None:
-            raise RuntimeError(
-                "Trying to save checkpoint in HF safetensors format, but sd_adapter is not provided."
-            )
-        hf_state_dict = self.engine.checkpointer.sd_adapter.to_hf(flattened_state_dict)
+
+        # Convert to HF format if adapter is available
+        sd_adapter = getattr(self.engine.checkpointer, 'sd_adapter', None)
+        if sd_adapter is not None:
+            hf_state_dict = sd_adapter.to_hf(flattened_state_dict)
+        else:
+            # Use flattened names directly if no adapter
+            hf_state_dict = flattened_state_dict
+
+        # Convert DTensors to full tensors
         for name, param in hf_state_dict.items():
+            if isinstance(param, DTensor):
+                param = param.full_tensor()
             key = get_param_key(policy_version, name)
-            await ts.put(key, param)
+            await ts.put(key, param)  # Per-tensor RPC call (baseline behavior)
+
         end_time = time.perf_counter()
         logger.info("Completed weights push in %.2f seconds", end_time - start_time)
 

@@ -1,0 +1,141 @@
+# Grouped Relative Policy Optimization (GRPO) - Qwen3-4B 1x1 Benchmark
+# >>> python -m apps.grpo.main --config apps/grpo/qwen3_4b_1x1.yaml
+# Config: FSDP=1, TP=1 (1x1)
+
+# Global configuration
+group_size: 8
+local_batch_size: 8 # per-device batch size
+max_req_tokens: 512
+max_res_tokens: 512  # Reduced for faster benchmarks
+model: "Qwen/Qwen3-4B"
+off_by_n: 1 # Off by one by default
+compile: true # Enable torch.compile for trainer/ref_model, and CUDA graphs for vLLM
+
+# Main loop configuration
+rollout_threads: 1   # Recommended to set equal to generator.num_replicas
+
+
+# Observability configuration
+metric_logging:
+  wandb:
+    project: grpo-training
+    group: grpo_benchmark_baseline_${oc.env:USER}
+    logging_mode: global_reduce # global_reduce, per_rank_reduce, per_rank_no_reduce
+  console:
+    logging_mode: global_reduce
+
+# Dataset configuration
+dataset:
+  path: "openai/gsm8k"
+  revision: "main"
+  data_split: "train"
+  streaming: true
+  model: ${model}
+
+# Generator configuration
+generator:
+  engine_args:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/engine/arg_utils.html#vllm.engine.arg_utils.EngineArgs
+    model: ${model}
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    enforce_eager: ${not:${compile}}
+  sampling_params:  # https://docs.vllm.ai/en/v0.10.0/api/vllm/sampling_params.html#vllm.sampling_params.SamplingParams
+    n: ${group_size}
+    max_tokens: ${max_res_tokens}
+    temperature: 1.0
+    top_p: 1.0
+    logprobs: 1  # returns log probabilities for sampled tokens
+
+# Trainer configuration
+trainer:
+  model:
+    name: qwen3
+    flavor: 4B
+    hf_assets_path: hf://${model}
+  optimizer:
+    name: AdamW
+    lr: 1e-5
+    eps: 1e-8
+  lr_scheduler:
+    warmup_steps: 1
+  training:
+    local_batch_size: ${local_batch_size}
+    seq_len: ${sum:${max_req_tokens},${max_res_tokens}}  # seq_len >= max_req_tokens + max_res_tokens
+    max_norm: 1.0
+    steps: 10  # Only 10 steps for benchmark
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: ${compile}
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1  # FSDP=1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+    disable_loss_parallel: true
+  checkpoint:
+    enable: false  # Disable checkpointing for benchmark
+  activation_checkpoint:
+    mode: selective
+    selective_ac_option: op
+
+# Replay buffer configuration
+replay_buffer:
+  batch_size: ${local_batch_size}
+  max_policy_age: ${off_by_n}
+  dp_size: ${trainer.parallelism.data_parallel_shard_degree} # Must equal trainer DP degree
+
+# Reference model configuration (if enabled in services)
+ref_model:
+  model:
+    name: qwen3
+    flavor: 4B
+    hf_assets_path: hf://${model}
+  training:
+    seq_len: ${trainer.training.seq_len}
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: ${compile}
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+  checkpoint:
+    enable: false
+
+# All resource allocations
+services:
+  generator:
+    procs: ${generator.engine_args.tensor_parallel_size}
+    num_replicas: 1
+    mesh_name: generator
+    with_gpus: true
+  reward_actor:
+    procs: 1
+    num_replicas: 1
+    mesh_name: reward_actor
+    with_gpus: false
+
+actors:
+  dataset:
+    procs: 1
+    with_gpus: false
+    mesh_name: dataset
+  trainer:
+    procs: 1
+    with_gpus: true
+    mesh_name: trainer
+  replay_buffer:
+    procs: 1
+    with_gpus: false
+    mesh_name: replay_buffer
+  compute_advantages:
+    procs: 1
+    with_gpus: false
+    mesh_name: compute_advantages
