@@ -11,10 +11,11 @@ and using CUDA IPC handles for cross-process GPU memory access. This achieves a
 ```bash
 # To restore this state:
 torchstore: 1e75533  # Add batched controller notification for put_batch
-torchforge: 4e50f26  # Update git checkpoint references in docs (Phase 2 complete)
+torchforge: 022b6fd  # Final checkpoint update for Phase 2
 
-# Phase 2 implementation commit:
+# Key commits:
 # torchforge: 063fce1  # Implement Phase 2: CUDA IPC direct weight transfer
+# torchforge: 9967369  # Phase 1 docs update
 ```
 
 ---
