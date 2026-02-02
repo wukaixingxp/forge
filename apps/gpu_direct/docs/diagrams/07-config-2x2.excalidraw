@@ -890,7 +890,7 @@
       "y": 535,
       "width": 450,
       "height": 16,
-      "text": "IPC: ~12.8s (NO all_gather! handles → shards directly) = ~4x faster",
+      "text": "IPC: 15.8s (NO all_gather! handles → shards directly) = 3.2x faster",
       "fontSize": 14,
       "fontFamily": 1,
       "textAlign": "left",

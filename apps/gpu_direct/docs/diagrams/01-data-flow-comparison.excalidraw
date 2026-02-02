@@ -1224,7 +1224,7 @@
       "y": 585,
       "width": 860,
       "height": 25,
-      "text": "GPU-Direct transfer via CUDA IPC handles  |  Transfer: 0.9s + Pause: 9.7s = 10.6s total  |  3.6x faster than baseline",
+      "text": "GPU-Direct transfer via CUDA IPC handles  |  Transfer: 0.9s + Pause: 9.7s = 10.6s total  |  2.9x faster than baseline",
       "fontSize": 14,
       "fontFamily": 1,
       "textAlign": "left",

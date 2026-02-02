@@ -1,4 +1,4 @@
-# Optimizing RL Weight Sync: 3.6x Faster with CUDA IPC
+# Optimizing RL Weight Sync: 2.9x Faster with CUDA IPC
 
 Weight synchronization between trainer and generator was killing our RL training loop. Here's how we fixed it.
 
@@ -92,7 +92,7 @@ for batch in batches:
 
 **Code:** Available in `batch_fetch` branch of `~/kai/forge`
 
-### 3. CUDA IPC (Phase 2) — 3.6x Faster
+### 3. CUDA IPC (Phase 2) — 2.9x Faster
 
 ```python
 # Zero-copy GPU-to-GPU transfer
@@ -370,10 +370,10 @@ Full qkv_proj:      TP rank 0:         TP rank 1:
 | Config | Baseline | IPC | Speedup | Transfer Speedup |
 |--------|----------|-----|---------|------------------|
 | 1x1 (FSDP=1, TP=1) | 31.2s | 10.6s | **2.9x** | 26x (23.6s → 0.9s) |
-| 2x1 (FSDP=2, TP=1) | 32.0s | 9.6s | **3.3x** | 18x (32.0s → 1.7s) |
-| 2x2 (FSDP=2, TP=2) | 51.2s | TBD | TBD | TBD |
+| 2x1 (FSDP=2, TP=1) | 32.0s | 9.6s | **3.3x** | 15x (26.4s → 1.7s) |
+| 2x2 (FSDP=2, TP=2) | 51.2s | 15.8s | **3.2x** | 9x (39.9s → 4.7s) |
 
-*Note: Times shown are `update_weights` duration. 2x2 IPC needs re-running after GQA fix.*
+*Note: Times shown are `update_weights` duration. Transfer speedup compares `worker_load_weights` times.*
 
 **Why IPC is dramatically faster:**
 1. **No all_gather on trainer** — IPC works directly with FSDP shards
