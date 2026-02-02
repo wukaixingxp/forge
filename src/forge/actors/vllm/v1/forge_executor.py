@@ -359,6 +359,169 @@ class ForgeWorkerWrapper(WorkerWrapper):
         logger.info(f"[IPC-Sliced] Loaded {loaded_count} weights for TP rank {tp_rank}")
         return loaded_count
 
+    @endpoint
+    @trace(
+        prefix="generator_perf/update_weights/receive_shards_ipc",
+        track_memory=False,
+        timer="gpu",
+    )
+    def receive_shards_ipc(
+        self,
+        policy_version: int,
+        shard_handles: dict[int, dict[str, "CudaIPCHandle"]],  # {fsdp_rank: {param_name: handle}}
+        shard_metadata: dict[int, dict[str, dict]],  # {fsdp_rank: {param_name: {global_shape, local_shape, offsets}}}
+        fsdp_size: int,
+        tp_size: int,
+    ) -> int:
+        """Receive FSDP shards from all trainer ranks, combine, and slice for TP.
+
+        This endpoint is used when both FSDP and TP are > 1. Instead of having
+        the trainer do an all_gather (expensive), each trainer rank sends its
+        shard with metadata. Workers combine shards and slice for TP locally.
+
+        Args:
+            policy_version: Version number for these weights
+            shard_handles: Dict mapping fsdp_rank to {param_name: IPC handle}
+            shard_metadata: Dict mapping fsdp_rank to {param_name: metadata dict}
+            fsdp_size: Number of FSDP ranks (shards to combine)
+            tp_size: Tensor parallel size for slicing
+
+        Returns:
+            Number of parameters loaded
+        """
+        import torch
+        from monarch.actor import context
+
+        # Get this worker's TP rank
+        rank = context().actor_instance.rank.rank
+        tp_rank = rank % tp_size
+
+        logger.info(
+            f"[IPC-Sharded] Worker rank {rank} (TP rank {tp_rank}) receiving shards from "
+            f"{fsdp_size} FSDP ranks for v{policy_version}"
+        )
+
+        model = self.worker.model_runner.model
+        param_map = self._build_param_map(model)
+        loaded_count = 0
+
+        # Get all parameter names from first shard (all ranks should have same params)
+        first_rank_handles = shard_handles.get(0, {})
+        param_names = list(first_rank_handles.keys())
+        logger.info(f"[IPC-Sharded] Processing {len(param_names)} parameters")
+
+        for param_name in param_names:
+            try:
+                # Collect and reconstruct shards from all FSDP ranks
+                shards = []
+                offsets_list = []
+
+                # Determine target device for this worker
+                target_device = f"cuda:{rank % torch.cuda.device_count()}"
+
+                for fsdp_rank in range(fsdp_size):
+                    if fsdp_rank not in shard_handles:
+                        logger.warning(f"[IPC-Sharded] Missing shard from FSDP rank {fsdp_rank} for {param_name}")
+                        continue
+
+                    handle = shard_handles[fsdp_rank].get(param_name)
+                    meta = shard_metadata[fsdp_rank].get(param_name)
+
+                    if handle is None or meta is None:
+                        logger.warning(f"[IPC-Sharded] Missing handle/metadata for {param_name} from rank {fsdp_rank}")
+                        continue
+
+                    # Reconstruct tensor from IPC handle and move to worker's GPU
+                    shard_tensor = handle.reconstruct_tensor().to(target_device).clone()
+                    shards.append(shard_tensor)
+                    offsets_list.append(meta["offsets"])
+
+                    # Debug: log shard info for first few params
+                    if "q_proj" in param_name and ".0." in param_name:
+                        logger.info(
+                            f"[IPC-Debug] {param_name} from rank {fsdp_rank}: "
+                            f"shard_shape={tuple(shard_tensor.shape)}, "
+                            f"offsets={meta['offsets']}, global={meta['global_shape']}"
+                        )
+
+                if len(shards) != fsdp_size:
+                    logger.warning(f"[IPC-Sharded] Incomplete shards for {param_name}: got {len(shards)}/{fsdp_size}")
+                    continue
+
+                # Get global shape from first shard's metadata
+                global_shape = shard_metadata[0][param_name]["global_shape"]
+
+                # Combine shards into full tensor based on offsets
+                # FSDP typically shards along dim 0 (rows)
+                full_tensor = self._combine_shards(shards, offsets_list, global_shape)
+
+                # Debug: log combined tensor shape for first few params
+                if "q_proj" in param_name and ".0." in param_name:
+                    logger.info(
+                        f"[IPC-Debug] {param_name} combined: "
+                        f"shape={tuple(full_tensor.shape)}, expected_global={global_shape}"
+                    )
+
+                # Now slice for TP and load
+                if param_name in param_map:
+                    mapping = param_map[param_name]
+
+                    if isinstance(mapping, tuple):
+                        # Merged weights (qkv_proj, gate_up_proj)
+                        merge_type, param = mapping
+                        self._copy_to_merged_param(merge_type, full_tensor, param, tp_rank, tp_size)
+                        loaded_count += 1
+                    else:
+                        param = mapping
+                        # Slice for TP if needed
+                        if full_tensor.shape != param.shape:
+                            full_tensor = self._slice_for_tp(param_name, full_tensor, param.shape, tp_rank, tp_size)
+                        param.data.copy_(full_tensor)
+                        loaded_count += 1
+                else:
+                    logger.warning(f"[IPC-Sharded] Parameter not found in model: {param_name}")
+
+            except Exception as e:
+                import traceback
+                logger.warning(f"[IPC-Sharded] Failed to load {param_name}: {e}\n{traceback.format_exc()}")
+
+        logger.info(f"[IPC-Sharded] Loaded {loaded_count} weights for TP rank {tp_rank}")
+        return loaded_count
+
+    def _combine_shards(
+        self,
+        shards: list,
+        offsets_list: list[tuple],
+        global_shape: tuple,
+    ) -> "torch.Tensor":
+        """Combine FSDP shards into a full tensor based on offsets.
+
+        FSDP typically shards along dimension 0 (rows). Shards are ordered
+        by their offset in that dimension.
+
+        Args:
+            shards: List of shard tensors
+            offsets_list: List of offset tuples for each shard
+            global_shape: Shape of the full combined tensor
+
+        Returns:
+            Combined full tensor
+        """
+        import torch
+
+        if len(shards) == 1:
+            return shards[0]
+
+        # Sort shards by their offset in dimension 0
+        indexed_shards = list(zip(offsets_list, shards))
+        indexed_shards.sort(key=lambda x: x[0][0])  # Sort by first offset
+
+        # Concatenate along dimension 0 (FSDP's shard dimension)
+        sorted_shards = [s for _, s in indexed_shards]
+        full_tensor = torch.cat(sorted_shards, dim=0)
+
+        return full_tensor
+
     async def _get_torchstore_client(self) -> LocalClient:
         """Get or create a LocalClient using the passed Controller reference.
 
@@ -544,38 +707,43 @@ class ForgeWorkerWrapper(WorkerWrapper):
         try:
             if merge_type.startswith("qkv_proj_"):
                 # QKV is merged along output dim (dim 0)
-                # For GQA models, Q has more heads than K/V, so sizes differ
+                # For GQA models, Q has more heads than K/V, so sizes differ!
                 # Order: Q, K, V
                 qkv_part = merge_type.split("_")[-1]  # 'q', 'k', or 'v'
 
-                # Get head configuration from vLLM model config for GQA support
-                model_config = self.vllm_config.model_config
-                parallel_config = self.vllm_config.parallel_config
-                # These return total heads, not per-rank
-                total_attention_heads = model_config.get_num_attention_heads(parallel_config)
-                total_kv_heads = model_config.get_num_kv_heads(parallel_config)
-                head_dim = model_config.get_head_size()
-
-                # Calculate sizes per TP rank (heads are sharded across TP ranks)
-                q_size_per_rank = (total_attention_heads // tp_size) * head_dim
-                kv_size_per_rank = (total_kv_heads // tp_size) * head_dim
-
-                # Slice the source tensor for TP
+                # First, slice source tensor for TP if needed
                 src_part_size = src_shape[0] // tp_size
-                tensor = tensor[tp_rank * src_part_size : (tp_rank + 1) * src_part_size]
+                if tp_size > 1:
+                    tensor = tensor[tp_rank * src_part_size : (tp_rank + 1) * src_part_size]
 
-                # Calculate offset based on Q/K/V part
+                # The sliced tensor size tells us the actual part size for this component
+                sliced_size = tensor.shape[0]
+
+                # For GQA, we need to find the correct offset in qkv_proj
+                # vLLM stores: [Q, K, V] where Q may be larger than K, V
+                # We need model config to know exact sizes, but we can infer from src tensor:
+                # - Q size per TP rank = src_q_shape[0] / tp_size
+                # - K/V size per TP rank = src_kv_shape[0] / tp_size
+                #
+                # As a workaround, compute offset based on which part we're copying
+                total_qkv_size = param_shape[0]
+
                 if qkv_part == 'q':
                     start_idx = 0
-                    part_size = q_size_per_rank
                 elif qkv_part == 'k':
-                    start_idx = q_size_per_rank
-                    part_size = kv_size_per_rank
-                else:  # 'v'
-                    start_idx = q_size_per_rank + kv_size_per_rank
-                    part_size = kv_size_per_rank
+                    # K starts after Q - but we need to know Q's size
+                    # Infer Q size: for standard attention Q=K=V, for GQA Q > K=V
+                    # We'll use the fact that Q + K + V = total_qkv_size
+                    # And the tensor we have is K's size per TP rank
+                    # This is complex without model config, so use a heuristic:
+                    # Check if total/3 == sliced_size (standard) or not (GQA)
+                    q_size_per_tp = total_qkv_size - 2 * sliced_size  # Q = total - K - V
+                    start_idx = q_size_per_tp
+                else:  # v
+                    q_size_per_tp = total_qkv_size - 2 * sliced_size
+                    start_idx = q_size_per_tp + sliced_size  # After Q and K
 
-                end_idx = start_idx + part_size
+                end_idx = start_idx + sliced_size
                 param.data[start_idx:end_idx].copy_(tensor)
                 return True
 

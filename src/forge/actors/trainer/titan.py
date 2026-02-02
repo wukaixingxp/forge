@@ -391,6 +391,127 @@ class TitanTrainer(ForgeActor):
         logger.info("Completed weights push in %.2f seconds", end_time - start_time)
 
     @endpoint
+    async def get_shard_ipc_handles(self, policy_version: int) -> dict:
+        """Get IPC handles for this rank's FSDP shard with metadata.
+
+        For FSDP models, each rank holds a shard of the weights. This method
+        returns IPC handles pointing to this rank's local shard along with
+        metadata (offsets, global_shape) needed to reconstruct full tensors.
+
+        The generator should call this on ALL FSDP ranks and combine the
+        results before sending to workers.
+
+        Returns:
+            Dict with:
+            - handles: {param_name: IPC handle for local shard}
+            - metadata: {param_name: {global_shape, local_shape, offsets}}
+            - fsdp_rank: This rank's position in FSDP mesh
+            - fsdp_size: Total number of FSDP ranks
+        """
+        from torchstore.transport.cuda_ipc import create_ipc_handle
+        from torch.distributed.tensor import DTensor
+        from torch.distributed.tensor._utils import _compute_local_shape_and_global_offset
+
+        logger.info(f"[IPC] Getting shard handles for v{policy_version}")
+        start_time = time.perf_counter()
+
+        if len(self.engine.model_parts) != 1:
+            raise RuntimeError("get_shard_ipc_handles only supports single model part")
+
+        model = self.engine.model_parts[0]
+        fsdp_size = self.parallelism.data_parallel_shard_degree
+
+        # Get FSDP rank from device mesh coordinate, not torch.distributed.get_rank()
+        # torch.distributed.get_rank() may return 0 for all procs in Monarch setup
+        dp_rank = None
+
+        sd = model.state_dict()
+        flattened_state_dict, _ = flatten_state_dict(sd)
+
+        sd_adapter = getattr(self.engine.checkpointer, 'sd_adapter', None)
+        if sd_adapter is not None:
+            hf_state_dict = sd_adapter.to_hf(flattened_state_dict)
+        else:
+            hf_state_dict = {
+                self._native_to_hf_name(name): param
+                for name, param in flattened_state_dict.items()
+            }
+
+        handles = {}
+        metadata = {}
+
+        for hf_name, param in hf_state_dict.items():
+            if isinstance(param, DTensor):
+                # Get local shard and compute its position in full tensor
+                local_shard = param._local_tensor
+                if not local_shard.is_cuda:
+                    continue
+
+                # Compute offsets using DTensor's placement info
+                coordinates = param.device_mesh.get_coordinate()
+
+                # Determine FSDP rank from first DTensor's mesh coordinate
+                if dp_rank is None and coordinates:
+                    dp_rank = coordinates[0]  # First coord is FSDP dim
+                    logger.info(f"[IPC] Determined FSDP rank from mesh coordinate: {dp_rank}")
+                _, offsets = _compute_local_shape_and_global_offset(
+                    param.shape,  # Global shape
+                    mesh_shape=param.device_mesh.shape,
+                    my_coordinate=coordinates,
+                    placements=param.placements,
+                )
+
+                if not local_shard.is_contiguous():
+                    local_shard = local_shard.contiguous()
+
+                try:
+                    handle = create_ipc_handle(local_shard)
+                    handles[hf_name] = handle
+                    metadata[hf_name] = {
+                        "global_shape": tuple(param.shape),
+                        "local_shape": tuple(local_shard.shape),
+                        "offsets": tuple(offsets),
+                    }
+                except Exception as e:
+                    logger.warning(f"[IPC] Failed to create handle for {hf_name}: {e}")
+            else:
+                # Non-DTensor (shouldn't happen with FSDP, but handle it)
+                if not param.is_cuda:
+                    continue
+                tensor = param.contiguous() if not param.is_contiguous() else param
+                try:
+                    handle = create_ipc_handle(tensor)
+                    handles[hf_name] = handle
+                    metadata[hf_name] = {
+                        "global_shape": tuple(param.shape),
+                        "local_shape": tuple(param.shape),
+                        "offsets": (0,) * len(param.shape),
+                    }
+                except Exception as e:
+                    logger.warning(f"[IPC] Failed to create handle for {hf_name}: {e}")
+
+        # Keep tensors alive until transfer completes
+        self._ipc_state_dict = hf_state_dict
+
+        # Fallback if no DTensor found (shouldn't happen with FSDP)
+        if dp_rank is None:
+            if torch.distributed.is_initialized():
+                dp_rank = torch.distributed.get_rank()
+            else:
+                dp_rank = 0
+            logger.warning(f"[IPC] Could not determine rank from DTensor, falling back to torch.distributed: {dp_rank}")
+
+        elapsed = time.perf_counter() - start_time
+        logger.info(f"[IPC] Created {len(handles)} shard handles in {elapsed:.3f}s (rank {dp_rank}/{fsdp_size})")
+
+        return {
+            "handles": handles,
+            "metadata": metadata,
+            "fsdp_rank": dp_rank,
+            "fsdp_size": fsdp_size,
+        }
+
+    @endpoint
     async def push_weights_ipc(
         self,
         policy_version: int,
@@ -408,13 +529,12 @@ class TitanTrainer(ForgeActor):
         1. Skip Python serialization - use CUDA IPC handles (66 bytes vs full tensor)
         2. Skip TorchStore - direct trainer -> generator communication
         3. For non-FSDP: skip state_dict() entirely
-        4. For TP>1: send handles to all workers (they slice locally)
-        5. **NO all_gather required** - IPC handles work with DTensor local shards
+        4. For TP>1 with FSDP=1: send full tensors (vLLM slices internally)
+        5. For TP>1 with FSDP>1: use get_shard_ipc_handles from all ranks
 
-        IMPORTANT: Unlike push_weights() which calls full_tensor() to gather
-        FSDP shards (expensive!), IPC handles work directly with DTensor's
-        local storage via dtensor._typed_storage() proxying to ._local_tensor.
-        This bypasses the O(model_size) all_gather collective entirely.
+        NOTE: For FSDP>1 + TP>1, the generator should use update_weights_ipc_sharded
+        instead, which calls get_shard_ipc_handles on all FSDP ranks and combines
+        shards on the generator side without requiring all_gather.
 
         Args:
             policy_version: Version number for these weights
@@ -441,9 +561,6 @@ class TitanTrainer(ForgeActor):
         handle_creation_start = time.perf_counter()
 
         if is_fsdp:
-            # NOTE: For FSDP2, state_dict() returns DTensors (sharded, NOT gathered).
-            # IPC handles work directly with the local shard via dtensor._local_tensor,
-            # bypassing the expensive all_gather that baseline push_weights() requires.
             logger.info("[IPC] FSDP detected, using state_dict() (shards via DTensor)")
             sd = model.state_dict()
             flattened_state_dict, _ = flatten_state_dict(sd)
@@ -599,61 +716,9 @@ class TitanTrainer(ForgeActor):
     async def push_weights_sharded(self, policy_version: int) -> dict:
         """Push FSDP shards directly to TorchStore without gathering.
 
-        NOTE: This method is NOT currently used. It's reserved for future
-        MULTI-NODE weight sync where CUDA IPC is not available.
-
-        ┌─────────────────────────────────────────────────────────────────┐
-        │  WHY THIS EXISTS (Multi-Node Weight Sync Without All-Gather)   │
-        └─────────────────────────────────────────────────────────────────┘
-
-        CUDA IPC (push_weights_ipc) only works on SINGLE NODE because IPC
-        handles reference local GPU memory addresses. For multi-node:
-
-        PROBLEM: How to sync weights without expensive all_gather?
-
-        SOLUTION: Sharded push + slice-aware fetch
-
-        ┌─────────────────────────────────────────────────────────────────┐
-        │  TRAINER NODE 0          TRAINER NODE 1                        │
-        │  ┌─────────────┐         ┌─────────────┐                       │
-        │  │ GPU 0       │         │ GPU 2       │                       │
-        │  │ shard_0     │         │ shard_1     │                       │
-        │  └─────┬───────┘         └─────┬───────┘                       │
-        │        │                       │                               │
-        │        │ put_slice()           │ put_slice()                   │
-        │        │ (with TensorSlice     │ (with TensorSlice             │
-        │        │  metadata)            │  metadata)                    │
-        │        ▼                       ▼                               │
-        │  ┌─────────────────────────────────────────┐                   │
-        │  │           TORCHSTORE (distributed)      │                   │
-        │  │  key: "v1/layer.0.weight"               │                   │
-        │  │  ├── slice[0]: shard_0, offsets=(0,0)   │                   │
-        │  │  └── slice[1]: shard_1, offsets=(N/2,0) │                   │
-        │  └─────────────────────────────────────────┘                   │
-        │                       │                                        │
-        │                       │ get_slice() or get_assembled()         │
-        │                       ▼                                        │
-        │  ┌─────────────────────────────────────────┐                   │
-        │  │           GENERATOR NODE                │                   │
-        │  │  Option A: Fetch all slices, assemble   │                   │
-        │  │  Option B: Fetch only needed slice      │                   │
-        │  │            (if generator also sharded)  │                   │
-        │  └─────────────────────────────────────────┘                   │
-        └─────────────────────────────────────────────────────────────────┘
-
-        KEY INSIGHT: Each FSDP rank pushes ONLY its local shard with metadata
-        about where it fits in the global tensor. No rank needs to see the
-        full tensor, avoiding the O(model_size) all_gather collective.
-
-        REQUIREMENTS TO COMPLETE THIS FEATURE:
-        1. TorchStore needs get_assembled() or similar to reconstruct from slices
-        2. Generator needs fetch_weights_sharded() to handle slice assembly
-        3. For multi-node RDMA: TorchStore transport needs GPU-direct RDMA support
-
-        ALTERNATIVE APPROACHES FOR MULTI-NODE:
-        1. NCCL send/recv: Point-to-point GPU transfers (requires careful scheduling)
-        2. GPU-Direct RDMA: InfiniBand/RoCE for direct GPU-to-GPU across nodes
-        3. Checkpoint-based: Write shards to shared filesystem, generator reads
+        Each FSDP rank stores its local shard with TensorSlice metadata,
+        enabling slice-aware fetching by generators. This avoids the CPU memory
+        spike from FSDP all_gather and enables GPU-to-GPU RDMA transfers.
 
         Args:
             policy_version: Version number for these weights.

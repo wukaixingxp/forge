@@ -629,9 +629,7 @@ class Generator(ForgeActor):
         try:
             load_start = time.perf_counter()
 
-            # For FSDP trainers (multi-rank), we need to call rank 0 which will
-            # gather shards and send. For single-rank trainers, call directly.
-            # ActorMesh uses _shape.ndslice.sizes to get dimensions
+            # Get trainer mesh size to detect FSDP
             try:
                 trainer_ndslice = trainer._shape.ndslice
                 trainer_procs = trainer_ndslice.sizes[0] if trainer_ndslice.sizes else 1
@@ -640,11 +638,47 @@ class Generator(ForgeActor):
 
             # Get generator's TP size for proper slicing
             tp_size = self.vllm_config.parallel_config.tensor_parallel_size
-            logger.info(f"[IPC] Generator TP size: {tp_size}")
+            logger.info(f"[IPC] Generator TP size: {tp_size}, Trainer FSDP size: {trainer_procs}")
 
-            if trainer_procs > 1:
-                # Multi-rank trainer (FSDP) - select rank 0
-                logger.info(f"[IPC] Multi-rank trainer detected ({trainer_procs} procs), calling rank 0")
+            if trainer_procs > 1 and tp_size > 1:
+                # FSDP + TP: Call ALL trainer ranks to get their shards
+                # Then combine shards and send to workers (no all_gather!)
+                logger.info(f"[IPC] FSDP={trainer_procs} + TP={tp_size}: collecting shards from all ranks")
+
+                # Call get_shard_ipc_handles on ALL trainer ranks in parallel
+                import asyncio
+                shard_tasks = []
+                for rank in range(trainer_procs):
+                    trainer_rank = trainer.slice(procs=rank)
+                    task = trainer_rank.get_shard_ipc_handles.call_one(
+                        policy_version=version,
+                    )
+                    shard_tasks.append(task)
+
+                shard_results = await asyncio.gather(*shard_tasks)
+                logger.info(f"[IPC] Collected shards from {len(shard_results)} trainer ranks")
+
+                # Organize by fsdp_rank: {fsdp_rank: {param_name: handle}}
+                all_shard_handles = {}
+                all_shard_metadata = {}
+                for shard_result in shard_results:
+                    fsdp_rank = shard_result["fsdp_rank"]
+                    all_shard_handles[fsdp_rank] = shard_result["handles"]
+                    all_shard_metadata[fsdp_rank] = shard_result["metadata"]
+
+                # Send all shards to workers - they will combine and slice for TP
+                await self.workers.receive_shards_ipc.call(
+                    policy_version=version,
+                    shard_handles=all_shard_handles,
+                    shard_metadata=all_shard_metadata,
+                    fsdp_size=trainer_procs,
+                    tp_size=tp_size,
+                )
+                result = {"param_count": len(shard_results[0]["handles"]), "fsdp_size": trainer_procs}
+
+            elif trainer_procs > 1:
+                # FSDP only (TP=1): Call rank 0, IPC works with shards directly
+                logger.info(f"[IPC] FSDP={trainer_procs}, TP=1: calling rank 0 (shards work directly)")
                 trainer_rank0 = trainer.slice(procs=0)
                 result = await trainer_rank0.push_weights_ipc.call_one(
                     policy_version=version,
@@ -652,7 +686,7 @@ class Generator(ForgeActor):
                     tp_size=tp_size,
                 )
             else:
-                # Single-rank trainer
+                # Single-rank trainer (no FSDP)
                 result = await trainer.push_weights_ipc.call_one(
                     policy_version=version,
                     generator_workers=self.workers,
