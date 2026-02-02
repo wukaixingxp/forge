@@ -1,4 +1,4 @@
-# Optimizing RL Weight Sync: 2.9x Faster with CUDA IPC
+# Optimizing RL Weight Sync: 4.3x Faster Training Steps with CUDA IPC
 
 Weight synchronization between trainer and generator was killing our RL training loop. Here's how we fixed it.
 
@@ -55,7 +55,7 @@ Online reinforcement learning has a fundamental loop: **train → sync → gener
       └──────────── new experience ─────────┘
 ```
 
-During weight sync, nothing productive happens. The trainer can't update weights it's sending. The generator can't use weights it hasn't received. At ~38 seconds per sync with the baseline approach (requiring extended timeouts), weight sync was dominating our training time.
+During weight sync, nothing productive happens. The trainer can't update weights it's sending. The generator can't use weights it hasn't received. At 31-51 seconds per sync with the baseline approach (depending on parallelism config), weight sync was dominating our training time.
 
 ---
 
@@ -357,11 +357,16 @@ Full qkv_proj:      TP rank 0:         TP rank 1:
 2. Push full tensors to TorchStore (serialize + RPC)
 3. Generator workers: fetch full tensors, slice for TP rank
 
-**IPC flow (no trainer-side all_gather):**
+**IPC flow (15.8s total) — NO all_gather on trainer!**
 1. Trainer: `model.state_dict()` → DTensors (sharded)
 2. `create_ipc_handle(dtensor)` → handles point to **local shard memory**
 3. Send handles from all FSDP ranks to generator
 4. Generator: reconstruct from shards → combine → slice for TP rank
+
+**Timing breakdown (from 2x2 IPC benchmark):**
+- pause_generation: **10.5s**
+- worker_load: **4.7s**
+- **Total: 15.8s** (vs 51.2s baseline = **3.2x faster**)
 
 ---
 
@@ -384,7 +389,9 @@ Full qkv_proj:      TP rank 0:         TP rank 1:
 1. Trainer-side all_gather for FSDP (GPU collective)
 2. More parameters to transfer (full model to 2 generator GPUs)
 
-**Recommended:** FSDP=2, TP=1 with IPC — 9.6s sync, best balance of memory efficiency and speed.
+**Recommendation:**
+- **FSDP=2, TP=1** (9.6s) — Best sync speed, use when generator fits on 1 GPU
+- **FSDP=2, TP=2** (15.8s) — Use when model requires tensor parallelism for memory
 
 ---
 
@@ -487,6 +494,7 @@ All benchmark logs are in `apps/gpu_direct/benchmark_logs/`:
 | `qwen3_4b_2x1_baseline.log` | 2x1 Baseline: 32.0s update_weights |
 | `ipc_2x1.log` | 2x1 IPC: 9.6s (7.3s pause + 1.7s transfer) |
 | `qwen3_4b_2x2_baseline.log` | 2x2 Baseline: 51.2s update_weights |
+| `2x2_ipc_benchmark_clean.log` | 2x2 IPC: 15.8s (10.5s pause + 4.7s transfer) |
 | `phase1_batched_rpc_1x1.log` | Batched RPC: 14s push, 8s fetch = ~22s |
 
 ---
