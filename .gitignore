@@ -203,3 +203,4 @@ assets/wheels/vllm*.whl
 
 # enroot / sqsh
 *.sqsh
+.omc/
