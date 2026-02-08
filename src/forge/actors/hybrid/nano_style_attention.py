@@ -142,6 +142,9 @@ class NanoStyleAttention(nn.Module):
         self.k_norm = None
         self.inner_attention = None
 
+        # Reference to original TorchTitan Attention module (set during replacement)
+        self.original_attention = None
+
         # KV cache buffers (assigned by KV cache manager)
         # Shape: [num_blocks, block_size, num_kv_heads, head_dim]
         self.k_cache = torch.tensor([])
@@ -214,11 +217,18 @@ class NanoStyleAttention(nn.Module):
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
 
+        # Handle GQA: expand KV heads to match Q heads for PyTorch SDPA
+        if self.n_kv_heads < self.n_heads:
+            n_rep = self.n_heads // self.n_kv_heads
+            # Repeat KV heads: [bs, n_kv_heads, seqlen, head_dim] -> [bs, n_heads, seqlen, head_dim]
+            xk = xk.repeat_interleave(n_rep, dim=1)
+            xv = xv.repeat_interleave(n_rep, dim=1)
+
         # Use inner_attention (same as original)
+        # Note: inner_attention is ScaledDotProductAttentionWrapper which doesn't take enable_gqa
         output = self.inner_attention(
             xq, xk, xv,
             scale=self.scaling,
-            enable_gqa=self.n_heads > self.n_kv_heads,
         ).transpose(1, 2).contiguous()
 
         # Project output
@@ -238,8 +248,22 @@ class NanoStyleAttention(nn.Module):
 
         bs, seqlen, _ = x.shape
 
+        # DIAGNOSTIC: Check input
+        import logging
+        logger = logging.getLogger(__name__)
+        if torch.isnan(x).any():
+            logger.error(f"[ATTN] Input x contains NaN! Count: {torch.isnan(x).sum()}")
+
         # Project to q, k, v
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+
+        # DIAGNOSTIC: Check projections
+        if torch.isnan(xq).any():
+            logger.error(f"[ATTN] xq contains NaN after projection! Count: {torch.isnan(xq).sum()}")
+        if torch.isnan(xk).any():
+            logger.error(f"[ATTN] xk contains NaN after projection! Count: {torch.isnan(xk).sum()}")
+        if torch.isnan(xv).any():
+            logger.error(f"[ATTN] xv contains NaN after projection! Count: {torch.isnan(xv).sum()}")
 
         # Reshape
         xq = xq.view(bs, seqlen, -1, self.head_dim)
@@ -259,16 +283,22 @@ class NanoStyleAttention(nn.Module):
         else:
             xq, xk = apply_rotary_emb(xq, xk, rope_cache)
 
-        # Transpose to [bs, n_heads, seqlen, head_dim]
-        xq = xq.transpose(1, 2)
-        xk = xk.transpose(1, 2)
-        xv = xv.transpose(1, 2)
+        # DIAGNOSTIC: Check after RoPE
+        if torch.isnan(xq).any():
+            logger.error(f"[ATTN] xq contains NaN after RoPE! Count: {torch.isnan(xq).sum()}")
+        if torch.isnan(xk).any():
+            logger.error(f"[ATTN] xk contains NaN after RoPE! Count: {torch.isnan(xk).sum()}")
 
-        # Flatten batch dimension: [bs * seqlen, n_heads, head_dim]
+        # Flatten batch dimension: [bs, seqlen, n_heads, head_dim] -> [bs*seqlen, n_heads, head_dim]
+        # CRITICAL: Make contiguous BEFORE reshape to ensure correct memory layout
         num_tokens = bs * seqlen
-        q = xq.reshape(num_tokens, self.n_heads, self.head_dim)
-        k = xk.reshape(num_tokens, self.n_kv_heads, self.head_dim)
-        v = xv.reshape(num_tokens, self.n_kv_heads, self.head_dim)
+        xq = xq.contiguous()
+        xk = xk.contiguous()
+        xv = xv.contiguous()
+
+        q = xq.view(num_tokens, self.n_heads, self.head_dim)
+        k = xk.view(num_tokens, self.n_kv_heads, self.head_dim)
+        v = xv.view(num_tokens, self.n_kv_heads, self.head_dim)
 
         # Store new key/value in cache
         if self.k_cache.numel() and self.v_cache.numel():
@@ -276,9 +306,11 @@ class NanoStyleAttention(nn.Module):
 
         if context.is_prefill:
             # Prefill: use varlen flash attention
-            if context.block_tables is not None:
-                # Use cached KV (prefix caching)
-                k, v = self.k_cache, self.v_cache
+            # CRITICAL: GQA support - expand KV heads to match Q heads
+            if self.n_kv_heads < self.n_heads:
+                n_rep = self.n_heads // self.n_kv_heads
+                k = k.repeat_interleave(n_rep, dim=1).contiguous()
+                v = v.repeat_interleave(n_rep, dim=1).contiguous()
 
             output = flash_attn_varlen_func(
                 q, k, v,
@@ -288,7 +320,7 @@ class NanoStyleAttention(nn.Module):
                 max_seqlen_k=context.max_seqlen_k,
                 softmax_scale=self.scale,
                 causal=True,
-                block_table=context.block_tables,
+                block_table=None,  # Disabled for now
             )
         else:
             # Decode: use cached KV attention
@@ -302,12 +334,22 @@ class NanoStyleAttention(nn.Module):
                 causal=True,
             )
 
+        # DIAGNOSTIC: Check flash attention output
+        if torch.isnan(output).any():
+            logger.error(f"[ATTN] output contains NaN after flash_attn! Count: {torch.isnan(output).sum()}")
+
         # Reshape back: [bs, seqlen, n_heads, head_dim]
         output = output.view(bs, seqlen, self.n_heads, self.head_dim)
 
         # Project output
         output = output.view(bs, seqlen, -1)
-        return self.wo(output)
+        output = self.wo(output)
+
+        # DIAGNOSTIC: Check final output
+        if torch.isnan(output).any():
+            logger.error(f"[ATTN] Final output contains NaN after wo projection! Count: {torch.isnan(output).sum()}")
+
+        return output
 
 
 def replace_attention_with_nano_style(model: nn.Module, attention_class_name: str = "Attention"):
@@ -351,6 +393,10 @@ def replace_attention_with_nano_style(model: nn.Module, attention_class_name: st
                 num_kv_heads=num_kv_heads,
                 scale=scale,
             )
+
+            # CRITICAL: Save reference to original attention module
+            # This allows us to delegate to the original TorchTitan implementation
+            new_attn.original_attention = module
 
             # Copy weight references from original attention
             new_attn.wq = module.wq

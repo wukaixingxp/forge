@@ -15,10 +15,24 @@ from forge.data_models.prompt import to_prompt
 from vllm.sampling_params import SamplingParams
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-# Phase 2 optimizations
-from forge.actors.hybrid.prefix_cache import PrefixCache
-from forge.actors.hybrid.paged_kv_cache import PagedKVCache
-from forge.actors.hybrid.cuda_graphs import CUDAGraphRunner
+# Phase 2 optimizations (optional imports)
+try:
+    from forge.actors.hybrid.prefix_cache import PrefixCache
+    PREFIX_CACHE_AVAILABLE = True
+except ImportError:
+    PREFIX_CACHE_AVAILABLE = False
+
+try:
+    from forge.actors.hybrid.paged_kv_cache import PagedKVCache
+    PAGED_KV_CACHE_AVAILABLE = True
+except ImportError:
+    PAGED_KV_CACHE_AVAILABLE = False
+
+try:
+    from forge.actors.hybrid.cuda_graphs import CUDAGraphRunner
+    CUDA_GRAPHS_AVAILABLE = True
+except ImportError:
+    CUDA_GRAPHS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +48,13 @@ class InferenceConfig:
         nano_vllm_tensor_parallel_size: Tensor parallelism size for nano-vLLM
         simple_kv_cache_num_blocks: Number of KV cache blocks for simple KV cache
         simple_kv_cache_block_size: Block size for simple KV cache
+        flash_attention_enabled: Enable flash attention for faster attention computation (Phase 1)
+        torch_compile_decode: Enable torch.compile for decode loop (Phase 1)
         enable_prefix_cache: Enable prefix caching for shared prompt prefixes (Phase 2)
-        enable_cuda_graphs: Enable CUDA graphs for decoding (Phase 2)
-        enable_paged_kv_cache: Enable paged KV cache for memory efficiency (Phase 2)
+        prefix_cache_max_entries: Maximum number of cached prefixes (Phase 2)
+        prefix_cache_min_length: Minimum prefix length to cache in tokens (Phase 2)
+        enable_cuda_graphs: Enable CUDA graphs for decoding (Phase 3)
+        enable_paged_kv_cache: Enable paged KV cache for memory efficiency (Phase 3)
         max_batch_size: Maximum batch size for inference
     """
     use_torchtitan_vllm: bool = False  # Use TorchTitan + vLLM wrapper (single copy)
@@ -45,9 +63,13 @@ class InferenceConfig:
     nano_vllm_tensor_parallel_size: int = 1  # TP size for nano-vLLM
     simple_kv_cache_num_blocks: int = 1000  # Number of blocks for simple KV cache
     simple_kv_cache_block_size: int = 16  # Block size for simple KV cache
-    enable_prefix_cache: bool = False  # Phase 2
-    enable_cuda_graphs: bool = False  # Phase 2
-    enable_paged_kv_cache: bool = False  # Phase 2
+    flash_attention_enabled: bool = True  # Phase 1: Flash attention (default on)
+    torch_compile_decode: bool = False  # Phase 1: Compile decode loop
+    enable_prefix_cache: bool = False  # Phase 2: Prefix caching
+    prefix_cache_max_entries: int = 1000  # Phase 2: Max cached prefixes
+    prefix_cache_min_length: int = 10  # Phase 2: Min prefix length to cache
+    enable_cuda_graphs: bool = False  # Phase 3: CUDA graphs
+    enable_paged_kv_cache: bool = False  # Phase 3: Paged KV cache
     max_batch_size: int = 16
 
 
@@ -104,7 +126,7 @@ class InferenceEngine:
         )
 
         # Phase 2: Initialize optimization components
-        if config.enable_prefix_cache:
+        if config.enable_prefix_cache and PREFIX_CACHE_AVAILABLE:
             self.prefix_cache = PrefixCache(
                 max_entries=1000,
                 min_prefix_len=10,
@@ -112,8 +134,10 @@ class InferenceEngine:
             logger.info("Prefix cache enabled (max_entries=1000, min_prefix_len=10)")
         else:
             self.prefix_cache = None
+            if config.enable_prefix_cache and not PREFIX_CACHE_AVAILABLE:
+                logger.warning("Prefix cache requested but not available")
 
-        if config.enable_paged_kv_cache:
+        if config.enable_paged_kv_cache and PAGED_KV_CACHE_AVAILABLE:
             # Get model configuration for KV cache dimensions
             model_config = getattr(model, "config", None)
             if model_config:
@@ -138,7 +162,7 @@ class InferenceEngine:
         else:
             self.kv_cache = None
 
-        if config.enable_cuda_graphs:
+        if config.enable_cuda_graphs and CUDA_GRAPHS_AVAILABLE:
             self.cuda_graphs = CUDAGraphRunner(
                 model=model,
                 device=device,
@@ -146,6 +170,8 @@ class InferenceEngine:
             logger.info("CUDA graphs enabled")
         else:
             self.cuda_graphs = None
+            if config.enable_cuda_graphs and not CUDA_GRAPHS_AVAILABLE:
+                logger.warning("CUDA graphs requested but not available")
 
         logger.info(
             f"InferenceEngine initialized (prefix_cache={config.enable_prefix_cache}, "

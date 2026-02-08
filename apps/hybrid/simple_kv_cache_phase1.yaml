@@ -1,20 +1,14 @@
-# Simple KV Cache - GRPO Training with Single Model Copy
-# >>> python -m apps.hybrid.main_hybrid --config apps/hybrid/simple_kv_cache.yaml
-#
-# Solution: Simple KV Cache (nano-vLLM style)
-# Model Copies: 1 (training + inference share same model in GPU memory)
-# Memory: ~23GB (15GB model + 8GB KV cache)
-# Speed: 10-20x faster than naive generation
-# Complexity: Low (~600 lines of logic)
+# Phase 1 Configuration - NANO KV CACHE ONLY
+# >>> python -m apps.hybrid.main_hybrid --config apps/hybrid/simple_kv_cache_phase1.yaml
 
 # Global configuration
 group_size: 8
-local_batch_size: 8
+local_batch_size: 1
 max_req_tokens: 1024
 max_res_tokens: 2048
 model: "Qwen/Qwen3-4B-Instruct-2507"
 off_by_n: 1
-compile: false  # Temporarily disabled due to ContextVar.get() incompatibility with torch.compile
+compile: false  # Temporarily disabled due to ContextVar compatibility
 
 # Main loop configuration
 rollout_threads: 1
@@ -32,7 +26,7 @@ dataset:
   streaming: true
   model: ${model}
 
-# Hybrid Policy Actor configuration (combines training + inference)
+# Hybrid Policy Actor configuration
 hybrid_policy:
   model:
     name: qwen3
@@ -51,16 +45,16 @@ hybrid_policy:
     local_batch_size: ${local_batch_size}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
     max_norm: 1.0
-    steps: 10  # Run for 10 steps for benchmarking
+    steps: 10  # Run for 10 steps
     dtype: bfloat16
     gc_freq: 1
 
   compile:
-    enable: false  # Temporarily disabled due to ContextVar compatibility
+    enable: false  # Temporarily disabled
 
   parallelism:
     data_parallel_replicate_degree: 1
-    data_parallel_shard_degree: 1  # Use 1 GPU for benchmarking
+    data_parallel_shard_degree: 1
     tensor_parallel_degree: 1
     pipeline_parallel_degree: 1
     context_parallel_degree: 1
@@ -69,7 +63,7 @@ hybrid_policy:
 
   checkpoint:
     enable: false
-    folder: ./checkpoint_simple_kv
+    folder: ./checkpoint_phase1
     initial_load_path: hf://${model}
     initial_load_in_hf: true
     last_save_in_hf: true
@@ -80,21 +74,19 @@ hybrid_policy:
     mode: selective
     selective_ac_option: op
 
-  # Inference config - Simple KV Cache
+  # Inference config - PHASE 1 ONLY (KV Cache enabled, Prefix Cache disabled)
   inference:
-    use_simple_kv_cache: true
+    use_simple_kv_cache: true  # ENABLED
     simple_kv_cache_num_blocks: 256
     simple_kv_cache_block_size: 256
-    max_batch_size: 16
+    max_batch_size: 8
 
     # Phase 1 optimizations
-    flash_attention_enabled: true  # Use flash attention (already implemented in nano_style_attention.py)
-    torch_compile_decode: true  # Compile decode loop for speedup
+    flash_attention_enabled: true
+    torch_compile_decode: true
 
-    # Phase 2 optimizations
-    enable_prefix_cache: true  # Cache shared prompt prefixes (perfect for GRPO/RLHF)
-    prefix_cache_max_entries: 1000  # Maximum number of cached prefixes (LRU eviction)
-    prefix_cache_min_length: 10  # Minimum prefix length to cache (tokens)
+    # Phase 2 DISABLED
+    enable_prefix_cache: false  # DISABLED for Phase 1 test - debugging NaN issue
 
   # Sampling params
   sampling_params:
@@ -124,7 +116,7 @@ actors:
     with_gpus: false
     mesh_name: dataset
   hybrid_policy:
-    procs: 1  # Use 1 GPU
+    procs: 1
     with_gpus: true
     mesh_name: hybrid_policy
   replay_buffer:

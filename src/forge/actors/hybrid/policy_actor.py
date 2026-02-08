@@ -202,8 +202,114 @@ class HybridPolicyActor(ForgeActor):
             if key in engine_config:
                 engine_config.pop(key)  # Not part of job config
 
-        self.engine = ForgeEngine(ForgeJobConfig(**engine_config))
-        self.engine.checkpointer.load(step=self.step)
+        # Create ForgeJobConfig first
+        job_config = ForgeJobConfig(**engine_config)
+
+        # CRITICAL FIX: Force checkpoint folder to empty on first run
+        # to load from initial_load_path (HuggingFace) instead of looking for
+        # non-existent checkpoint files. This matches ReferenceModel pattern.
+        if self.step == 1:
+            # First run - load from HuggingFace, not from checkpoint folder
+            original_folder = job_config.checkpoint.folder
+            job_config.checkpoint.folder = ""
+            # IMPORTANT: Enable checkpoint loading even if disabled in config
+            # We need to load initial weights from HuggingFace
+            job_config.checkpoint.enable = True
+            # IMPORTANT: Only load model weights, skip LM head (TorchTitan uses Qwen3Model without head)
+            job_config.checkpoint.initial_load_model_only = True
+
+            # Resolve hf:// URL to actual local path
+            if job_config.checkpoint.initial_load_path.startswith("hf://"):
+                from forge.util.config import _resolve_hf_model_path
+                resolved_path = _resolve_hf_model_path(job_config.checkpoint.initial_load_path)
+                logger.info(f"[CHECKPOINT] Resolved {job_config.checkpoint.initial_load_path} -> {resolved_path}")
+                job_config.checkpoint.initial_load_path = resolved_path
+
+            logger.info(f"[CHECKPOINT] First run: forcing load from initial_load_path={job_config.checkpoint.initial_load_path}")
+            logger.info(f"[CHECKPOINT] Changed checkpoint.folder from '{original_folder}' to '' and enabled checkpoint loading")
+            logger.info(f"[CHECKPOINT] Set initial_load_model_only=True to skip LM head mismatch")
+
+        self.engine = ForgeEngine(job_config)
+
+        # Load from initial_load_path (e.g., HuggingFace) on first run
+        logger.info(f"[CHECKPOINT] Loading weights...")
+        sample_weight_before = self.engine.model_parts[0].tok_embeddings.weight[0, :5].clone()
+        logger.info(f"[CHECKPOINT] Sample embedding weights BEFORE load: {sample_weight_before}")
+
+        # WORKAROUND: Filter lm_head.weight when loading HF checkpoint
+        # The state dict adapter maps lm_head.weight → output.weight, but Qwen3Model has no output layer
+        # We need to patch BOTH to_hf() and from_hf() to remove lm_head from the mapping
+        if self.step == 1 and job_config.checkpoint.initial_load_in_hf:
+            original_to_hf = self.engine.checkpointer.sd_adapter.to_hf
+            original_from_hf = self.engine.checkpointer.sd_adapter.from_hf
+
+            def filtered_to_hf(state_dict):
+                # Don't create lm_head mapping if model doesn't have output layer
+                result = original_to_hf(state_dict)
+                if "lm_head.weight" in result:
+                    logger.info(f"[CHECKPOINT] Removing lm_head.weight from to_hf mapping (model has no output layer)")
+                    result = {k: v for k, v in result.items() if k != "lm_head.weight"}
+                return result
+
+            def filtered_from_hf(hf_state_dict):
+                # Remove lm_head.weight before adapter processes it
+                if "lm_head.weight" in hf_state_dict:
+                    logger.info(f"[CHECKPOINT] Filtering out lm_head.weight from HF checkpoint")
+                    hf_state_dict = {k: v for k, v in hf_state_dict.items() if k != "lm_head.weight"}
+                return original_from_hf(hf_state_dict)
+
+            self.engine.checkpointer.sd_adapter.to_hf = filtered_to_hf
+            self.engine.checkpointer.sd_adapter.from_hf = filtered_from_hf
+
+        self.engine.checkpointer.load()
+
+        # Check embedding weights AFTER loading
+        sample_weight_after = self.engine.model_parts[0].tok_embeddings.weight[0, :5]
+        logger.info(f"[CHECKPOINT] Sample embedding weights AFTER load: {sample_weight_after}")
+        weights_changed = not torch.allclose(sample_weight_before, sample_weight_after, rtol=1e-5)
+        logger.info(f"[CHECKPOINT] Weights changed after load: {weights_changed}")
+
+        if not weights_changed:
+            logger.error(f"[CHECKPOINT] ERROR: Weights did NOT change after load! Model is UNINITIALIZED!")
+        else:
+            logger.info(f"[CHECKPOINT] SUCCESS: Weights loaded successfully from HuggingFace!")
+
+        # Verify weight tying is intact (output.weight should share storage with tok_embeddings.weight)
+        model = self.engine.model_parts[0]
+        if hasattr(model, 'output') and hasattr(model, 'tok_embeddings'):
+            output_weight = model.output.weight
+            emb_weight = model.tok_embeddings.weight
+            same_storage = output_weight.data_ptr() == emb_weight.data_ptr()
+            logger.info(f"[CHECKPOINT] Weight tying check: output and embeddings share storage: {same_storage}")
+            if not same_storage:
+                logger.error(f"[CHECKPOINT] ERROR: Weight tying broken! Re-tying output.weight to tok_embeddings.weight")
+                model.output.weight = model.tok_embeddings.weight
+                logger.info(f"[CHECKPOINT] Weight tying restored")
+
+        # CRITICAL FIX: Reinitialize rope_cache after loading checkpoint
+        # rope_cache is a non-persistent buffer (persistent=False), so it's NOT saved in checkpoints
+        # After loading weights, we need to recompute it to ensure correct position embeddings
+        if self.step == 1 and hasattr(model, '_precompute_rope_cache'):
+            logger.info(f"[CHECKPOINT] Reinitializing rope_cache after checkpoint load...")
+            old_rope_cache = model.rope_cache.clone() if hasattr(model, 'rope_cache') else None
+            model.rope_cache = model._precompute_rope_cache()
+
+            # Ensure rope_cache is on correct device (CUDA)
+            if model.rope_cache.device.type != 'cuda':
+                model.rope_cache = model.rope_cache.to('cuda')
+
+            logger.info(f"[CHECKPOINT] rope_cache shape: {model.rope_cache.shape}, device: {model.rope_cache.device}")
+
+            # Verify rope_cache changed
+            if old_rope_cache is not None:
+                rope_changed = not torch.allclose(old_rope_cache.cpu(), model.rope_cache.cpu(), rtol=1e-5)
+                logger.info(f"[CHECKPOINT] rope_cache reinitialized: {rope_changed}")
+        elif hasattr(model, 'rope_cache'):
+            # Even if not step 1, ensure rope_cache is on CUDA
+            if model.rope_cache.device.type != 'cuda':
+                logger.info(f"[CHECKPOINT] Moving rope_cache to CUDA...")
+                model.rope_cache = model.rope_cache.to('cuda')
+
         self.engine.optimizers.zero_grad()
 
         # Setup tokenizer for inference
@@ -298,6 +404,9 @@ class HybridPolicyActor(ForgeActor):
                 num_blocks=self.inference.simple_kv_cache_num_blocks,
                 block_size=self.inference.simple_kv_cache_block_size,
                 max_model_len=2048,
+                enable_prefix_cache=self.inference.enable_prefix_cache,
+                prefix_cache_max_entries=self.inference.prefix_cache_max_entries,
+                prefix_cache_min_length=self.inference.prefix_cache_min_length,
             )
             logger.info(
                 f"Using simple KV cache (nano-style, single model copy, 10-20x speedup expected)"
@@ -398,8 +507,18 @@ class HybridPolicyActor(ForgeActor):
         # Token sampling is synchronized via broadcast in inference engine
         params = sampling_params or self.sampling_params
         logger.info(f"[HYBRID] Calling inference_engine.generate()...")
-        completions = await self.inference_engine.generate(prompt, params)
+
+        # SimpleKVCacheEngine expects List[str], others expect str
+        if self.inference.use_simple_kv_cache:
+            completions = await self.inference_engine.generate([prompt], params)
+        else:
+            completions = await self.inference_engine.generate(prompt, params)
+
         logger.info(f"[HYBRID] Got {len(completions)} completions")
+
+        # Log the actual completion texts
+        for idx, completion in enumerate(completions):
+            logger.info(f"[HYBRID] Completion {idx}: {repr(completion.text)}")
 
         record_metric("hybrid_policy/generate/count_requests", 1, Reduce.SUM)
         record_metric(

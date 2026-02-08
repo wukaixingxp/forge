@@ -14,10 +14,13 @@ This scheduler is a simplified version compared to vLLM's full scheduler:
 """
 
 from typing import Optional
+import logging
 import torch
 
 from forge.actors.hybrid.sequence import Sequence, SequenceStatus
 from forge.actors.hybrid.block_manager import BlockManager
+
+logger = logging.getLogger(__name__)
 from forge.actors.hybrid.inference_context import InferenceContext
 
 
@@ -80,12 +83,90 @@ class SimpleScheduler:
         Returns:
             Number of sequences successfully added
         """
+        # Optimization: Check if all sequences have identical prompt tokens
+        # This is common in GRPO where we generate n=8 responses from same prompt
+        if len(sequences) > 1:
+            first_prompt = sequences[0].prompt_token_ids
+            all_identical = all(
+                seq.prompt_token_ids == first_prompt
+                for seq in sequences[1:]
+            )
+
+            if all_identical:
+                logger.info(
+                    f"[OPTIMIZATION] Detected {len(sequences)} sequences with identical prompts - "
+                    f"using shared prefix blocks for faster allocation"
+                )
+                return self._add_sequences_with_shared_prefix(sequences)
+
+        # Standard path: add sequences one by one
         added = 0
         for seq in sequences:
             if self.add_sequence(seq):
                 added += 1
             else:
                 break  # Stop if we run out of blocks
+        return added
+
+    def _add_sequences_with_shared_prefix(self, sequences: list[Sequence]) -> int:
+        """Add sequences that share the same prompt prefix.
+
+        This method optimizes allocation for multiple sequences with identical prompts
+        (common in GRPO where n=8 responses are generated from the same prompt).
+
+        Strategy:
+        1. Allocate first sequence normally
+        2. For remaining sequences, copy the first sequence's prompt block table
+           and increment reference counts
+
+        Args:
+            sequences: List of sequences with identical prompts
+
+        Returns:
+            Number of sequences successfully added
+        """
+        if not sequences:
+            return 0
+
+        # Allocate first sequence normally
+        first_seq = sequences[0]
+        if not self.add_sequence(first_seq):
+            return 0
+
+        added = 1
+        num_prompt_blocks = first_seq.num_prompt_tokens // self.block_manager.block_size
+
+        # For remaining sequences, share the prompt blocks
+        for seq in sequences[1:]:
+            # Check if we have enough blocks for this sequence
+            # We only need blocks for the completion part (prompts are shared)
+            if not self.block_manager.can_allocate(seq):
+                break
+
+            # Allocate blocks for this sequence
+            # The block manager's hash-based caching will automatically reuse blocks
+            self.block_manager.allocate(seq)
+
+            # Verify that blocks were shared (they should have high ref counts)
+            if len(seq.block_table) >= num_prompt_blocks:
+                # Check if first blocks have ref_count > 1 (indicating sharing)
+                shared_blocks = sum(
+                    1 for i in range(min(num_prompt_blocks, len(seq.block_table)))
+                    if self.block_manager.blocks[seq.block_table[i]].ref_count > 1
+                )
+                if shared_blocks > 0:
+                    logger.debug(
+                        f"Sequence {seq.seq_id}: Shared {shared_blocks}/{num_prompt_blocks} "
+                        f"prompt blocks via hash-based caching"
+                    )
+
+            seq.status = SequenceStatus.WAITING
+            self.sequences.append(seq)
+            added += 1
+
+        logger.info(
+            f"[OPTIMIZATION] Added {added}/{len(sequences)} sequences with shared prefix blocks"
+        )
         return added
 
     def schedule_prefill(self) -> Optional[InferenceContext]:

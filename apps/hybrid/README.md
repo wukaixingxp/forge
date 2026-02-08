@@ -21,7 +21,7 @@ This directory contains configurations for two hybrid training+inference solutio
 
 ### Usage
 ```bash
-python -m apps.grpo.main_hybrid --config apps/hybrid/simple_kv_cache.yaml
+python -m apps.hybrid.main_hybrid --config apps/hybrid/simple_kv_cache.yaml
 ```
 
 ### Memory Breakdown
@@ -51,7 +51,7 @@ python -m apps.grpo.main_hybrid --config apps/hybrid/simple_kv_cache.yaml
 
 ### Usage
 ```bash
-python -m apps.grpo.main_hybrid --config apps/hybrid/simple_vllm.yaml
+python -m apps.hybrid.main_hybrid --config apps/hybrid/simple_vllm.yaml
 ```
 
 ### Memory Breakdown

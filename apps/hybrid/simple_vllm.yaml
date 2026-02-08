@@ -1,5 +1,5 @@
 # SimpleVLLM - GRPO Training with Separate vLLM Instance
-# >>> python -m apps.grpo.main_hybrid --config apps/hybrid/simple_vllm.yaml
+# >>> python -m apps.hybrid.main_hybrid --config apps/hybrid/simple_vllm.yaml
 #
 # Solution: SimpleVLLM (standard vLLM with HF checkpoint)
 # Model Copies: 2 (training model + separate vLLM inference model)
