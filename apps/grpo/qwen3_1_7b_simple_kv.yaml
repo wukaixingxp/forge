@@ -1,0 +1,168 @@
+# Grouped Relative Policy Optimization (GRPO) with HybridPolicyActor + Simple KV Cache
+# >>> python -m apps.grpo.main_hybrid --config apps/grpo/qwen3_1_7b_simple_kv.yaml
+
+# Global configuration
+group_size: 8
+local_batch_size: 8 # per-device batch size
+max_req_tokens: 1024
+max_res_tokens: 2048
+model: "Qwen/Qwen3-1.7B"
+off_by_n: 1 # Off by one by default
+compile: false # Disable torch.compile for Simple KV Cache (not compatible yet)
+
+# Main loop configuration
+rollout_threads: 1
+
+# Observability configuration
+metric_logging:
+  console:
+    logging_mode: global_reduce
+
+# Dataset configuration
+dataset:
+  path: "openai/gsm8k"
+  revision: "main"
+  data_split: "train"
+  streaming: true
+  model: ${model}
+
+# Hybrid Policy Actor configuration (combines training + inference)
+hybrid_policy:
+  # Model config
+  model:
+    name: qwen3
+    flavor: 1.7B
+    hf_assets_path: hf://${model}
+
+  # Optimizer config
+  optimizer:
+    name: AdamW
+    lr: 1e-5
+    eps: 1e-8
+
+  # Learning rate scheduler
+  lr_scheduler:
+    warmup_steps: 1
+
+  # Training config
+  training:
+    local_batch_size: ${local_batch_size}
+    seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
+    max_norm: 1.0
+    steps: 1000000
+    dtype: bfloat16
+    gc_freq: 1
+
+  # Compilation
+  compile:
+    enable: ${compile}
+
+  # Parallelism (FSDP for both training and inference)
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 2  # FSDP across 2 GPUs
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+    disable_loss_parallel: true
+
+  # Checkpoint config
+  checkpoint:
+    enable: true
+    folder: ./checkpoint_simple_kv
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+    last_save_in_hf: true
+    interval: 500
+    async_mode: "disabled"
+
+  # Activation checkpointing
+  activation_checkpoint:
+    mode: selective
+    selective_ac_option: op
+
+  # Inference config - SIMPLE KV CACHE ENABLED
+  inference:
+    # Simple KV Cache (nano-vLLM style, single model copy)
+    use_torchtitan_vllm: false  # Don't use TorchTitan + vLLM
+    use_nano_vllm: false         # Don't use nano-vLLM (separate model)
+    use_simple_kv_cache: true    # USE SIMPLE KV CACHE!
+    simple_kv_cache_num_blocks: 256  # Number of KV cache blocks (increased for multiple sequences)
+    simple_kv_cache_block_size: 256  # Block size (tokens per block, must be divisible by 256 for flash attn)
+    enable_cuda_graphs: false    # CUDA graphs not implemented yet
+    max_batch_size: 16
+    # Legacy options (not used with simple KV cache)
+    enable_prefix_cache: false
+    enable_paged_kv_cache: false
+
+  # Sampling params for generation
+  sampling_params:
+    n: ${group_size}
+    max_tokens: ${max_res_tokens}
+    temperature: 1.0
+    top_p: 1.0
+    logprobs: 1  # returns log probabilities for sampled tokens
+
+# Replay buffer configuration
+replay_buffer:
+  batch_size: ${local_batch_size}
+  max_policy_age: ${off_by_n}
+  dp_size: ${hybrid_policy.parallelism.data_parallel_shard_degree}
+
+# Reference model configuration (if enabled in services)
+ref_model:
+  model:
+    name: qwen3
+    flavor: 1.7B
+    hf_assets_path: hf://${model}
+  training:
+    seq_len: ${hybrid_policy.training.seq_len}
+    dtype: bfloat16
+    gc_freq: 1
+  compile:
+    enable: ${compile}
+  parallelism:
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: 1
+    tensor_parallel_degree: 1
+    pipeline_parallel_degree: 1
+    context_parallel_degree: 1
+    expert_parallel_degree: 1
+  checkpoint:
+    enable: true
+    initial_load_path: hf://${model}
+    initial_load_in_hf: true
+
+# All resource allocations
+services:
+  # Ref model is only necessary if the loss requires it (GRPO with beta>0),
+  # but we recommend using DAPO instead
+  # ref_model:
+  #   procs: 1
+  #   num_replicas: 1
+  #   with_gpus: true
+  #   mesh_name: ref_model
+  reward_actor:
+    procs: 1
+    num_replicas: 1
+    mesh_name: reward_actor
+    with_gpus: false
+
+actors:
+  dataset:
+    procs: 1
+    with_gpus: false
+    mesh_name: dataset
+  hybrid_policy:
+    procs: 2  # FSDP across 2 GPUs
+    with_gpus: true
+    mesh_name: hybrid_policy
+  replay_buffer:
+    procs: 1
+    with_gpus: false
+    mesh_name: replay_buffer
+  compute_advantages:
+    procs: 1
+    with_gpus: false
+    mesh_name: compute_advantages

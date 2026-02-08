@@ -1,0 +1,444 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1770506459874,
+  "projectRoot": "/home/dev/work/kaiwu/forge",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "pytest",
+        "version": null,
+        "category": "testing"
+      }
+    ],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "pytest",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "assets",
+      "docs",
+      "scripts",
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "apps": {
+      "path": "apps",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1770506459870,
+      "keyFiles": []
+    },
+    "assets": {
+      "path": "assets",
+      "purpose": "Static assets",
+      "fileCount": 1,
+      "lastAccessed": 1770506459870,
+      "keyFiles": [
+        "versions.sh"
+      ]
+    },
+    "benchmarks": {
+      "path": "benchmarks",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1770506459870,
+      "keyFiles": [
+        "__init__.py"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 3,
+      "lastAccessed": 1770506459871,
+      "keyFiles": [
+        "Makefile",
+        "license_header.txt",
+        "make.bat"
+      ]
+    },
+    "experimental": {
+      "path": "experimental",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1770506459872,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1770506459873,
+      "keyFiles": [
+        "install.sh",
+        "install_rocm.sh",
+        "pixi_cuda_env.sh"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1770506459873,
+      "keyFiles": []
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 4,
+      "lastAccessed": 1770506459873,
+      "keyFiles": [
+        "README.md",
+        "__init__.py",
+        "conftest.py",
+        "test_utils.py"
+      ]
+    },
+    "tests/assets": {
+      "path": "tests/assets",
+      "purpose": "Static assets",
+      "fileCount": 3,
+      "lastAccessed": 1770506459874,
+      "keyFiles": [
+        "custom_schedule.csv",
+        "extend_jobconfig_example.py",
+        "test_tiktoken.model"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/forge/actors/hybrid/inference_engine.py",
+      "accessCount": 42,
+      "lastAccessed": 1770518461744,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/hybrid/policy_actor.py",
+      "accessCount": 36,
+      "lastAccessed": 1770518932130,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo/main_hybrid.py",
+      "accessCount": 26,
+      "lastAccessed": 1770514246157,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo/qwen3_1_7b_hybrid.yaml",
+      "accessCount": 12,
+      "lastAccessed": 1770518728502,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo/qwen3_1_7b_hybrid_1gpu.yaml",
+      "accessCount": 6,
+      "lastAccessed": 1770516728834,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/reference_model.py",
+      "accessCount": 5,
+      "lastAccessed": 1770511816232,
+      "type": "file"
+    },
+    {
+      "path": "HYBRID_TIMEOUT_FIX.md",
+      "accessCount": 4,
+      "lastAccessed": 1770512177555,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo/main.py",
+      "accessCount": 4,
+      "lastAccessed": 1770513392304,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/hybrid/prefix_cache.py",
+      "accessCount": 3,
+      "lastAccessed": 1770510150336,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo/qwen3_1_7b.yaml",
+      "accessCount": 3,
+      "lastAccessed": 1770518705768,
+      "type": "file"
+    },
+    {
+      "path": "src/forge",
+      "accessCount": 3,
+      "lastAccessed": 1770519877320,
+      "type": "directory"
+    },
+    {
+      "path": "apps/examples/hybrid_demo.py",
+      "accessCount": 2,
+      "lastAccessed": 1770508619919,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 2,
+      "lastAccessed": 1770510591189,
+      "type": "directory"
+    },
+    {
+      "path": "src/forge/actors/hybrid/__init__.py",
+      "accessCount": 2,
+      "lastAccessed": 1770511781513,
+      "type": "file"
+    },
+    {
+      "path": "KV_CACHE_ACCELERATION_PLAN.md",
+      "accessCount": 2,
+      "lastAccessed": 1770514863850,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/hybrid/paged_kv_cache.py",
+      "accessCount": 2,
+      "lastAccessed": 1770515348613,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/types.py",
+      "accessCount": 2,
+      "lastAccessed": 1770519873637,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/data_models/completion.py",
+      "accessCount": 2,
+      "lastAccessed": 1770519880812,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/trainer/titan.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506464852,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/vllm/v1/generator.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506469378,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/controller/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506469440,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/controller/actor.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506474389,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/rl/loss/ops.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506500051,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit_tests/actors/hybrid/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506665766,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit_tests/actors/hybrid/test_mode_switch.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506665903,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit_tests/actors/hybrid/test_inference.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506666031,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit_tests/actors/hybrid/test_training.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506666168,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo/README_HYBRID.md",
+      "accessCount": 1,
+      "lastAccessed": 1770506702686,
+      "type": "file"
+    },
+    {
+      "path": "HYBRID_IMPLEMENTATION_SUMMARY.md",
+      "accessCount": 1,
+      "lastAccessed": 1770506756292,
+      "type": "file"
+    },
+    {
+      "path": "tests/integration_tests/test_hybrid_minimal.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506890653,
+      "type": "file"
+    },
+    {
+      "path": "test_hybrid_quick.py",
+      "accessCount": 1,
+      "lastAccessed": 1770506959110,
+      "type": "file"
+    },
+    {
+      "path": "IMPLEMENTATION_STATUS.md",
+      "accessCount": 1,
+      "lastAccessed": 1770507003665,
+      "type": "file"
+    },
+    {
+      "path": "PHASE_1_COMPLETE.md",
+      "accessCount": 1,
+      "lastAccessed": 1770507084174,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/hybrid/cuda_graphs.py",
+      "accessCount": 1,
+      "lastAccessed": 1770507754001,
+      "type": "file"
+    },
+    {
+      "path": "PHASE_2_COMPLETE.md",
+      "accessCount": 1,
+      "lastAccessed": 1770508014189,
+      "type": "file"
+    },
+    {
+      "path": "apps/examples/hybrid_demo.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1770508164007,
+      "type": "file"
+    },
+    {
+      "path": "apps/examples/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1770508185498,
+      "type": "file"
+    },
+    {
+      "path": "apps/examples/README.md",
+      "accessCount": 1,
+      "lastAccessed": 1770508230766,
+      "type": "file"
+    },
+    {
+      "path": "E2E_EXAMPLE_COMPLETE.md",
+      "accessCount": 1,
+      "lastAccessed": 1770508305181,
+      "type": "file"
+    },
+    {
+      "path": "COMPLETE_IMPLEMENTATION_SUMMARY.md",
+      "accessCount": 1,
+      "lastAccessed": 1770508362722,
+      "type": "file"
+    },
+    {
+      "path": "apps/examples/hybrid_demo_simple.py",
+      "accessCount": 1,
+      "lastAccessed": 1770508668247,
+      "type": "file"
+    },
+    {
+      "path": "VALIDATION_COMPLETE.md",
+      "accessCount": 1,
+      "lastAccessed": 1770508720091,
+      "type": "file"
+    },
+    {
+      "path": "BUG_FIX_SUMMARY.md",
+      "accessCount": 1,
+      "lastAccessed": 1770511504585,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors",
+      "accessCount": 1,
+      "lastAccessed": 1770511810248,
+      "type": "directory"
+    },
+    {
+      "path": "HYBRID_FIX_SUMMARY.md",
+      "accessCount": 1,
+      "lastAccessed": 1770512193783,
+      "type": "file"
+    },
+    {
+      "path": "apps/grpo",
+      "accessCount": 1,
+      "lastAccessed": 1770512444508,
+      "type": "directory"
+    },
+    {
+      "path": "FINAL_FIX_SUMMARY.md",
+      "accessCount": 1,
+      "lastAccessed": 1770512748544,
+      "type": "file"
+    },
+    {
+      "path": "SUCCESS_SUMMARY.md",
+      "accessCount": 1,
+      "lastAccessed": 1770514268069,
+      "type": "file"
+    },
+    {
+      "path": "FINAL_STATUS.md",
+      "accessCount": 1,
+      "lastAccessed": 1770514770839,
+      "type": "file"
+    },
+    {
+      "path": "src/forge/actors/hybrid/nano_vllm_engine.py",
+      "accessCount": 1,
+      "lastAccessed": 1770515182927,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
