@@ -123,12 +123,20 @@ class InferenceContext:
         block_tables = []
         context_lens = []
 
+        import logging
+        import os
+        logger = logging.getLogger(__name__)
+        DEBUG = os.environ.get('FORGE_DEBUG', '0') == '1'
+
         for seq in self.sequences:
             # Find slot for new token
             last_block_id = seq.block_table[-1]
             token_offset = (seq.num_tokens - 1) % self.block_manager.block_size
             slot = last_block_id * self.block_manager.block_size + token_offset
             slot_mapping.append(slot)
+
+            if DEBUG:
+                logger.info(f"[DECODE_META] Seq {seq.seq_id}: block_table={seq.block_table}, num_tokens={seq.num_tokens}, slot={slot}")
 
             block_tables.append(seq.block_table)
             context_lens.append(seq.num_tokens - 1)  # Context = all tokens except new one
@@ -142,7 +150,15 @@ class InferenceContext:
         for bt in block_tables:
             padded = bt + [-1] * (max_blocks - len(bt))
             padded_block_tables.append(padded)
+
+        if DEBUG:
+            logger.info(f"[DECODE_META] block_tables before tensor: {block_tables}")
+            logger.info(f"[DECODE_META] padded_block_tables: {padded_block_tables}")
+
         self.block_tables = torch.tensor(padded_block_tables, dtype=torch.int32, device='cuda')
+
+        if DEBUG:
+            logger.info(f"[DECODE_META] block_tables tensor: {self.block_tables.tolist()}")
 
         self.context_lens = torch.tensor(context_lens, dtype=torch.int32, device='cuda')
 

@@ -14,8 +14,13 @@ import torch
 import torch.nn as nn
 import types
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+# Debug mode controlled by environment variable
+# Set FORGE_DEBUG=1 to enable verbose [MODEL] logging
+DEBUG_MODE = os.environ.get('FORGE_DEBUG', '0') == '1'
 
 
 def patch_model_for_positions(model: nn.Module) -> nn.Module:
@@ -41,13 +46,18 @@ def patch_model_for_positions(model: nn.Module) -> nn.Module:
                 # Batched: [batch, seq_len]
                 batch_size, seq_len = input_ids.shape
                 positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
+                if DEBUG_MODE:
+                    logger.info(f"[MODEL] No positions provided, defaulting to sequential: shape={positions.shape}, values={positions[0].tolist() if batch_size > 0 else []}")
             else:
                 # Varlen: [total_tokens]
                 positions = torch.arange(input_ids.shape[0], device=input_ids.device)
+                if DEBUG_MODE:
+                    logger.info(f"[MODEL] No positions provided, defaulting to sequential (varlen): shape={positions.shape}, values={positions.tolist()[:10]}")
 
         # Embeddings
         h = self.tok_embeddings(input_ids)
-        logger.info(f"[MODEL] After embeddings - shape: {h.shape}, has NaN: {torch.isnan(h).any()}, dtype: {h.dtype}")
+        if DEBUG_MODE:
+            logger.info(f"[MODEL] After embeddings - shape: {h.shape}, has NaN: {torch.isnan(h).any()}, dtype: {h.dtype}")
 
         # Get rope_cache
         rope_cache = self.rope_cache
@@ -57,16 +67,18 @@ def patch_model_for_positions(model: nn.Module) -> nn.Module:
             layer = self.layers[layer_name]
             # Call layer with positions
             h = layer(h, rope_cache, attention_masks=None, positions=positions)
-            # Only log critical checkpoints to reduce verbosity
-            if i in [0, 17, 35] or i == len(self.layers) - 1:
+            # Only log critical checkpoints when debug mode is enabled
+            if DEBUG_MODE and (i in [0, 17, 35] or i == len(self.layers) - 1):
                 logger.info(f"[MODEL] After layer {i} - has NaN: {torch.isnan(h).any()}")
 
         # Final norm and output
         h = self.norm(h)
-        logger.info(f"[MODEL] After final norm - shape: {h.shape}, has NaN: {torch.isnan(h).any()}")
+        if DEBUG_MODE:
+            logger.info(f"[MODEL] After final norm - shape: {h.shape}, has NaN: {torch.isnan(h).any()}")
 
         output = self.output(h)
-        logger.info(f"[MODEL] After output projection - shape: {output.shape}, has NaN: {torch.isnan(output).any()}")
+        if DEBUG_MODE:
+            logger.info(f"[MODEL] After output projection - shape: {output.shape}, has NaN: {torch.isnan(output).any()}")
 
         return output
 

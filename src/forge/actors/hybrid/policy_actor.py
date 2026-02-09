@@ -215,7 +215,8 @@ class HybridPolicyActor(ForgeActor):
             # IMPORTANT: Enable checkpoint loading even if disabled in config
             # We need to load initial weights from HuggingFace
             job_config.checkpoint.enable = True
-            # IMPORTANT: Only load model weights, skip LM head (TorchTitan uses Qwen3Model without head)
+            # REQUIRED: When loading from HF safetensors, MUST set model_only=True
+            # We'll manually load and tie output.weight after loading
             job_config.checkpoint.initial_load_model_only = True
 
             # Resolve hf:// URL to actual local path
@@ -227,7 +228,7 @@ class HybridPolicyActor(ForgeActor):
 
             logger.info(f"[CHECKPOINT] First run: forcing load from initial_load_path={job_config.checkpoint.initial_load_path}")
             logger.info(f"[CHECKPOINT] Changed checkpoint.folder from '{original_folder}' to '' and enabled checkpoint loading")
-            logger.info(f"[CHECKPOINT] Set initial_load_model_only=True to skip LM head mismatch")
+            logger.info(f"[CHECKPOINT] Set initial_load_model_only=True (required for HF safetensors)")
 
         self.engine = ForgeEngine(job_config)
 
@@ -237,24 +238,25 @@ class HybridPolicyActor(ForgeActor):
         logger.info(f"[CHECKPOINT] Sample embedding weights BEFORE load: {sample_weight_before}")
 
         # WORKAROUND: Filter lm_head.weight when loading HF checkpoint
-        # The state dict adapter maps lm_head.weight → output.weight, but Qwen3Model has no output layer
-        # We need to patch BOTH to_hf() and from_hf() to remove lm_head from the mapping
+        # We need to patch BOTH to_hf() and from_hf() to avoid lm_head validation errors
+        # Then manually tie output.weight to tok_embeddings.weight after loading
         if self.step == 1 and job_config.checkpoint.initial_load_in_hf:
             original_to_hf = self.engine.checkpointer.sd_adapter.to_hf
             original_from_hf = self.engine.checkpointer.sd_adapter.from_hf
 
             def filtered_to_hf(state_dict):
-                # Don't create lm_head mapping if model doesn't have output layer
+                # Don't create lm_head mapping during validation
                 result = original_to_hf(state_dict)
                 if "lm_head.weight" in result:
-                    logger.info(f"[CHECKPOINT] Removing lm_head.weight from to_hf mapping (model has no output layer)")
+                    logger.info(f"[CHECKPOINT] Removing lm_head.weight from to_hf mapping")
                     result = {k: v for k, v in result.items() if k != "lm_head.weight"}
                 return result
 
             def filtered_from_hf(hf_state_dict):
-                # Remove lm_head.weight before adapter processes it
+                # Remove lm_head.weight from HF checkpoint
+                # We'll manually tie output.weight to tok_embeddings.weight after loading
                 if "lm_head.weight" in hf_state_dict:
-                    logger.info(f"[CHECKPOINT] Filtering out lm_head.weight from HF checkpoint")
+                    logger.info(f"[CHECKPOINT] Filtering out lm_head.weight from HF checkpoint (will tie weights after load)")
                     hf_state_dict = {k: v for k, v in hf_state_dict.items() if k != "lm_head.weight"}
                 return original_from_hf(hf_state_dict)
 
@@ -274,17 +276,40 @@ class HybridPolicyActor(ForgeActor):
         else:
             logger.info(f"[CHECKPOINT] SUCCESS: Weights loaded successfully from HuggingFace!")
 
-        # Verify weight tying is intact (output.weight should share storage with tok_embeddings.weight)
+        # CRITICAL: Tie output.weight to tok_embeddings.weight for coherent generation
+        # In HuggingFace Qwen3, lm_head.weight and embed_tokens.weight are tied (same storage)
+        # Since we filtered out lm_head during loading, output.weight is random
+        # We MUST tie it to tok_embeddings to generate coherent text
         model = self.engine.model_parts[0]
         if hasattr(model, 'output') and hasattr(model, 'tok_embeddings'):
-            output_weight = model.output.weight
-            emb_weight = model.tok_embeddings.weight
-            same_storage = output_weight.data_ptr() == emb_weight.data_ptr()
-            logger.info(f"[CHECKPOINT] Weight tying check: output and embeddings share storage: {same_storage}")
+            # Check current weight tying status
+            same_storage = model.output.weight.data_ptr() == model.tok_embeddings.weight.data_ptr()
+            logger.info(f"[CHECKPOINT] Weight tying check BEFORE: output and embeddings share storage: {same_storage}")
+
             if not same_storage:
-                logger.error(f"[CHECKPOINT] ERROR: Weight tying broken! Re-tying output.weight to tok_embeddings.weight")
+                logger.warning(f"[CHECKPOINT] Weight tying broken! Tying output.weight to tok_embeddings.weight...")
+                # Sample weights before tying
+                output_sample_before = model.output.weight.data[0, :5].clone()
+                emb_sample = model.tok_embeddings.weight.data[0, :5].clone()
+                logger.info(f"[CHECKPOINT] output.weight[0,:5] BEFORE tie: {output_sample_before}")
+                logger.info(f"[CHECKPOINT] tok_embeddings.weight[0,:5]: {emb_sample}")
+
+                # CRITICAL: Make output.weight point to the SAME underlying tensor as tok_embeddings.weight
+                # This is the standard way to tie weights in PyTorch
                 model.output.weight = model.tok_embeddings.weight
-                logger.info(f"[CHECKPOINT] Weight tying restored")
+
+                # Verify the tying worked
+                same_storage_after = model.output.weight.data_ptr() == model.tok_embeddings.weight.data_ptr()
+                output_sample_after = model.output.weight.data[0, :5]
+                logger.info(f"[CHECKPOINT] output.weight[0,:5] AFTER tie: {output_sample_after}")
+                logger.info(f"[CHECKPOINT] Weight tying check AFTER: output and embeddings share storage: {same_storage_after}")
+
+                if same_storage_after:
+                    logger.info(f"[CHECKPOINT] ✓ Weight tying successfully restored - model should generate coherent text")
+                else:
+                    logger.error(f"[CHECKPOINT] ✗ Weight tying restoration FAILED - text generation WILL produce gibberish!")
+            else:
+                logger.info(f"[CHECKPOINT] ✓ Weight tying already intact - model should generate coherent text")
 
         # CRITICAL FIX: Reinitialize rope_cache after loading checkpoint
         # rope_cache is a non-persistent buffer (persistent=False), so it's NOT saved in checkpoints

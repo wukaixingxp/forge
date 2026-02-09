@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 import logging
+import os
 import triton
 import triton.language as tl
 
@@ -25,6 +26,9 @@ import triton.language as tl
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 
 logger = logging.getLogger(__name__)
+
+# Debug mode controlled by environment variable
+DEBUG_MODE = os.environ.get('FORGE_DEBUG', '0') == '1'
 
 
 def apply_rotary_emb_with_positions(
@@ -360,6 +364,11 @@ class ForgeAttention(nn.Module):
                 k_expanded = k
                 v_expanded = v
 
+            if DEBUG_MODE:
+                logger.info(f"[FORGE_ATTN] Prefill: total_tokens={total_tokens}, "
+                           f"q shape={q.shape}, k shape={k_expanded.shape}")
+                logger.info(f"[FORGE_ATTN] Prefill positions: {positions[:10].tolist() if positions.numel() < 10 else positions[:10].tolist()}")
+
             # Store UNEXPANDED K/V in cache (flash_attn_with_kvcache supports GQA)
             if self.k_cache.numel() and self.v_cache.numel():
                 store_kvcache(k, v, self.k_cache, self.v_cache, context.slot_mapping)
@@ -377,6 +386,15 @@ class ForgeAttention(nn.Module):
             # Decode: use cached KV attention
             # flash_attn_with_kvcache supports GQA natively, so use unexpanded K/V cache
 
+            if DEBUG_MODE:
+                logger.info(f"[FORGE_ATTN] Decode: total_tokens={total_tokens}, num_seqs={len(context.sequences)}")
+                logger.info(f"[FORGE_ATTN] Decode positions: {positions.tolist()}")
+                logger.info(f"[FORGE_ATTN] cache_seqlens: {context.context_lens.tolist()}")
+                logger.info(f"[FORGE_ATTN] block_tables shape: {context.block_tables.shape}, first seq blocks: {context.block_tables[0][:5].tolist()}")
+                logger.info(f"[FORGE_ATTN] q stats: min={q.min().item():.4f}, max={q.max().item():.4f}, has_nan={torch.isnan(q).any()}")
+                logger.info(f"[FORGE_ATTN] k stats: min={k.min().item():.4f}, max={k.max().item():.4f}, has_nan={torch.isnan(k).any()}")
+                logger.info(f"[FORGE_ATTN] v stats: min={v.min().item():.4f}, max={v.max().item():.4f}, has_nan={torch.isnan(v).any()}")
+
             # CRITICAL: We need to store the NEW K/V into cache for this decode step!
             # flash_attn_with_kvcache can update the cache in-place when k and v are provided
             output = flash_attn_with_kvcache(
@@ -390,6 +408,9 @@ class ForgeAttention(nn.Module):
                 softmax_scale=self.scale,
                 causal=True,
             ).squeeze(1)  # Remove seq_len dimension
+
+            if DEBUG_MODE:
+                logger.info(f"[FORGE_ATTN] output stats: min={output.min().item():.4f}, max={output.max().item():.4f}, has_nan={torch.isnan(output).any()}")
 
         # Project output: [total_tokens, num_heads * head_dim]
         output = output.view(total_tokens, self.num_heads * self.head_dim)

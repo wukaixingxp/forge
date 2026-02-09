@@ -357,8 +357,16 @@ class SimpleKVCacheEngine:
                     device='cuda'
                 ).unsqueeze(1)  # [batch_size, 1] - CRITICAL FIX: correct shape for batch decode
 
-                # Forward pass (decode)
-                logits = self.model(last_tokens)
+                # CRITICAL FIX: Pass correct positions for RoPE
+                # Each token is at position (seq.num_tokens - 1)
+                positions = torch.tensor(
+                    [seq.num_tokens - 1 for seq in decode_context.sequences],
+                    dtype=torch.long,
+                    device='cuda'
+                ).unsqueeze(1)  # [batch_size, 1]
+
+                # Forward pass (decode) WITH CORRECT POSITIONS
+                logits = self.model(last_tokens, positions)
 
                 # Extract last position logits and reshape to [1, batch_size, vocab_size]
                 last_logits = logits[:, -1, :].unsqueeze(0)  # [batch_size, vocab_size] -> [1, batch_size, vocab_size]
@@ -606,7 +614,22 @@ class SimpleKVCacheEngine:
         for seq, logprob in zip(prefill_context.sequences, token_logprobs_full.tolist()):
             seq.logprobs.append(logprob)
 
-        # Step 5: Update all sequences (not just representatives)
+        # Step 5: CRITICAL - Copy KV cache from representatives to all sequences
+        # Since we only ran forward pass on representatives, only their blocks have KV cache data.
+        # We need to copy the cache to all other sequences' blocks.
+        for repr_idx, (seq_idx, group_indices) in enumerate(seq_to_group.items()):
+            repr_seq = representatives[repr_idx]
+            # For each sequence in this group (except the representative itself)
+            for other_idx in group_indices:
+                if other_idx == seq_idx:
+                    continue  # Skip the representative itself
+
+                other_seq = prefill_context.sequences[other_idx]
+
+                # Copy KV cache from repr_seq's blocks to other_seq's blocks
+                self._copy_kv_cache_blocks(repr_seq.block_table, other_seq.block_table)
+
+        # Step 6: Update all sequences (not just representatives)
         self.scheduler.update_sequences(
             next_tokens_full,
             eos_token_id=self.tokenizer.eos_token_id,
@@ -618,6 +641,29 @@ class SimpleKVCacheEngine:
             f"[PREFILL_DEDUP] Saved {computation_saved:.1%} of prefill computation "
             f"({len(representatives)} forward vs {len(prefill_context.sequences)} sequences)"
         )
+
+    def _copy_kv_cache_blocks(self, src_block_table: list[int], dst_block_table: list[int]):
+        """Copy KV cache from source blocks to destination blocks.
+
+        This is needed after prefill deduplication: only the representative sequence
+        gets its KV cache written during the forward pass. We need to copy that cache
+        to all other sequences' blocks so they can use it during decode.
+
+        Args:
+            src_block_table: Block IDs of the source (representative) sequence
+            dst_block_table: Block IDs of the destination sequence
+        """
+        # Get the KV cache tensors for each layer
+        for layer_name, layer in self.model.layers.items():
+            k_cache = layer.attention.k_cache  # [num_blocks, block_size, num_kv_heads, head_dim]
+            v_cache = layer.attention.v_cache
+
+            # Copy each block
+            for src_block_id, dst_block_id in zip(src_block_table, dst_block_table):
+                k_cache[dst_block_id].copy_(k_cache[src_block_id])
+                v_cache[dst_block_id].copy_(v_cache[src_block_id])
+
+        logger.info(f"[PREFILL_DEDUP] Copied KV cache from blocks {src_block_table} to {dst_block_table}")
 
     def _sample_tokens(
         self,

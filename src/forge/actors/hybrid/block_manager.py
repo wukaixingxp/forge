@@ -126,6 +126,10 @@ class BlockManager:
         3. Allocates new blocks for cache misses
         4. Updates hash table for new blocks
 
+        CRITICAL: The last block (if partial) should NEVER be shared between sequences
+        that will generate different completions, as they will write different tokens
+        to the same cache location causing KV cache corruption.
+
         Args:
             seq: Sequence to allocate blocks for
         """
@@ -133,8 +137,18 @@ class BlockManager:
         h = -1
         cache_miss = False
 
+        import logging
+        import os
+        logger = logging.getLogger(__name__)
+        DEBUG = os.environ.get('FORGE_DEBUG', '0') == '1'
+
+        if DEBUG:
+            logger.info(f"[BLOCK_MGR] Allocating blocks for seq {seq.seq_id}, num_blocks={seq.num_blocks}, tokens={seq.token_ids}")
+
         for i in range(seq.num_blocks):
             token_ids = seq.block(i)
+            is_last_block = (i == seq.num_blocks - 1)
+            is_partial_block = len(token_ids) < self.block_size
 
             # Only hash full blocks (prefix caching requires complete blocks)
             h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1
@@ -142,14 +156,26 @@ class BlockManager:
             # Check for cache hit
             block_id = self.hash_to_block_id.get(h, -1)
 
+            if DEBUG:
+                logger.info(f"[BLOCK_MGR] Seq {seq.seq_id}, block {i}: h={h}, cached_block_id={block_id}, "
+                           f"is_last={is_last_block}, is_partial={is_partial_block}, "
+                           f"tokens={token_ids}, cache_miss={cache_miss}")
+
             # Verify tokens match (hash collision protection)
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
                 cache_miss = True
 
-            if cache_miss:
-                # Cache miss: allocate new block
+            # CRITICAL FIX: Never share the last partial block
+            # Reason: During decode, different sequences will write different tokens to it,
+            # causing KV cache corruption if they share the same physical block
+            force_new_block = is_last_block and is_partial_block
+
+            if cache_miss or force_new_block:
+                # Cache miss or forced new block: allocate new block
                 block_id = self.free_block_ids[0]
                 block = self._allocate_block(block_id)
+                if DEBUG:
+                    logger.info(f"[BLOCK_MGR] Seq {seq.seq_id}, block {i}: ALLOCATED NEW block_id={block_id}")
             else:
                 # Cache hit: reuse existing block
                 seq.num_cached_tokens += self.block_size
