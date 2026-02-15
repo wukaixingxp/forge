@@ -835,6 +835,11 @@ class TitanTrainer(ForgeActor):
 
         This is a simplified version that handles common patterns.
         For full conversion, use the sd_adapter.to_hf() method on gathered tensors.
+
+        Note: Some models (e.g., Qwen) may already use HF-style naming conventions
+        (e.g., model.layers.0.self_attn.q_proj.weight). For these models, the
+        fallback logic at the end will correctly handle them by ensuring the
+        "model." prefix is present without double-prefixing.
         """
         # Common mappings for Llama-style models
         mappings = {
@@ -874,7 +879,8 @@ class TitanTrainer(ForgeActor):
             if re.match(pattern, native_fqn):
                 return re.sub(pattern, replacement, native_fqn)
 
-        # If no mapping found, return as-is (prefixed with model.)
+        # For models that already use HF-style naming (e.g., Qwen), the name
+        # may already be correct. Just ensure the "model." prefix is present.
         if not native_fqn.startswith("model."):
             return f"model.{native_fqn}"
         return native_fqn

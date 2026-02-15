@@ -15,7 +15,7 @@ End-to-end GRPO training example with GPU-direct weight synchronization using CU
 ## Quick Start
 
 ```bash
-cd /home/dev/framework/torchforge
+cd /path/to/forge
 source /opt/conda/etc/profile.d/conda.sh && conda activate vllm
 
 # Set environment
@@ -26,17 +26,19 @@ export FORGE_IPC_GPU_VISIBILITY=1  # Required for IPC
 python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_4b_2x2.yaml
 
 # Compare with baseline (TorchStore)
-python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_32b_2x2_baseline.yaml
+python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_4b_2x2_baseline.yaml
 ```
 
 ## Configurations
 
 | Config | Model | Trainer | Generator | Weight Sync |
 |--------|-------|---------|-----------|-------------|
+| `qwen3_4b_1x1.yaml` | Qwen3-4B | FSDP=1 | TP=1 | IPC |
+| `qwen3_4b_1x1_baseline.yaml` | Qwen3-4B | FSDP=1 | TP=1 | TorchStore |
 | `qwen3_4b_2x2.yaml` | Qwen3-4B | FSDP=2 | TP=2 | IPC |
-| `qwen3_32b_2x2.yaml` | Qwen3-32B | FSDP=2 | TP=2 | IPC |
-| `qwen3_32b_2x2_baseline.yaml` | Qwen3-32B | FSDP=2 | TP=2 | TorchStore |
-| `qwen3_30b_moe_2x2.yaml` | Qwen3-30B-A3B (MoE) | FSDP=2 | TP=2 | IPC |
+| `qwen3_4b_2x2_baseline.yaml` | Qwen3-4B | FSDP=2 | TP=2 | TorchStore |
+| `qwen3_4b_fsdp2_tp1.yaml` | Qwen3-4B | FSDP=2 | TP=1 | IPC |
+| `qwen3_4b_fsdp2_tp1_baseline.yaml` | Qwen3-4B | FSDP=2 | TP=1 | TorchStore |
 
 ## Architecture
 
@@ -125,14 +127,16 @@ nvidia-smi  # Should show all GPUs
 ```
 apps/gpu_direct/
 ├── __init__.py
-├── main.py                      # Main training loop with IPC support
-├── data.py                      # GSM8K dataset actor
-├── grading.py                   # Math and thinking reward functions
-├── README.md                    # This file
-├── qwen3_4b_2x2.yaml           # Quick test config (IPC)
-├── qwen3_32b_2x2.yaml          # Production config (IPC)
-├── qwen3_32b_2x2_baseline.yaml # Baseline comparison (TorchStore)
-└── qwen3_30b_moe_2x2.yaml      # MoE model config (IPC)
+├── main.py                           # Main training loop with IPC support
+├── data.py                           # GSM8K dataset actor
+├── grading.py                        # Math and thinking reward functions
+├── README.md                         # This file
+├── qwen3_4b_1x1.yaml                # Qwen3-4B 1x1 config (IPC)
+├── qwen3_4b_1x1_baseline.yaml       # Qwen3-4B 1x1 baseline (TorchStore)
+├── qwen3_4b_2x2.yaml                # Qwen3-4B 2x2 config (IPC)
+├── qwen3_4b_2x2_baseline.yaml       # Qwen3-4B 2x2 baseline (TorchStore)
+├── qwen3_4b_fsdp2_tp1.yaml          # Qwen3-4B FSDP=2, TP=1 (IPC)
+└── qwen3_4b_fsdp2_tp1_baseline.yaml # Qwen3-4B FSDP=2, TP=1 baseline (TorchStore)
 ```
 
 ## Related Documentation

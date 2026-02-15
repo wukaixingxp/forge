@@ -640,9 +640,12 @@ class Generator(ForgeActor):
             tp_size = self.vllm_config.parallel_config.tensor_parallel_size
             logger.info(f"[IPC] Generator TP size: {tp_size}, Trainer FSDP size: {trainer_procs}")
 
-            if trainer_procs > 1 and tp_size > 1:
-                # FSDP + TP: Call ALL trainer ranks to get their shards
-                # Then combine shards and send to workers (no all_gather!)
+            if trainer_procs > 1:
+                # FSDP (with or without TP): Collect shards from ALL trainer ranks
+                # and let workers combine them. This avoids triggering all_gather
+                # on the trainer side and correctly handles DTensor local shards.
+                # Note: Even for TP=1, we must collect all shards because rank 0's
+                # state_dict() returns DTensors (local shards), not full tensors.
                 logger.info(f"[IPC] FSDP={trainer_procs} + TP={tp_size}: collecting shards from all ranks")
 
                 # Call get_shard_ipc_handles on ALL trainer ranks in parallel
@@ -675,16 +678,6 @@ class Generator(ForgeActor):
                     tp_size=tp_size,
                 )
                 result = {"param_count": len(shard_results[0]["handles"]), "fsdp_size": trainer_procs}
-
-            elif trainer_procs > 1:
-                # FSDP only (TP=1): Call rank 0, IPC works with shards directly
-                logger.info(f"[IPC] FSDP={trainer_procs}, TP=1: calling rank 0 (shards work directly)")
-                trainer_rank0 = trainer.slice(procs=0)
-                result = await trainer_rank0.push_weights_ipc.call_one(
-                    policy_version=version,
-                    generator_workers=self.workers,
-                    tp_size=tp_size,
-                )
             else:
                 # Single-rank trainer (no FSDP)
                 result = await trainer.push_weights_ipc.call_one(

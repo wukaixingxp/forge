@@ -8,14 +8,14 @@
 GPU-Direct Weight Sync GRPO Example
 
 This example demonstrates GRPO training with GPU-direct weight synchronization
-using CUDA IPC handles for 60x faster weight transfer between trainer and generator.
+using CUDA IPC handles for 26x faster weight transfer between trainer and generator.
 
 Usage:
     # With IPC weight sync (recommended for single-node)
-    python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_32b_2x2.yaml
+    python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_4b_2x2.yaml
 
     # Compare with baseline (TorchStore)
-    python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_32b_2x2_baseline.yaml
+    python -m apps.gpu_direct.main --config apps/gpu_direct/qwen3_4b_2x2_baseline.yaml
 
 Environment:
     FORGE_IPC_GPU_VISIBILITY=1  # Required for IPC across trainer/generator GPUs
@@ -59,13 +59,25 @@ def validate_ipc_config(cfg: DictConfig) -> bool:
     if not use_ipc:
         return True
 
+    # Check if this is a multi-GPU setup
+    trainer_procs = cfg.get("actors", {}).get("trainer", {}).get("procs", 1)
+    generator_tp = cfg.get("generator", {}).get("engine_args", {}).get("tensor_parallel_size", 1)
+    is_multi_gpu = trainer_procs > 1 or generator_tp > 1
+
     # Check environment variable
     if os.environ.get("FORGE_IPC_GPU_VISIBILITY") != "1":
-        logger.warning(
-            "FORGE_IPC_GPU_VISIBILITY=1 not set. "
-            "IPC weight sync may fail for multi-GPU configs. "
-            "Set: export FORGE_IPC_GPU_VISIBILITY=1"
-        )
+        if is_multi_gpu:
+            raise ValueError(
+                "FORGE_IPC_GPU_VISIBILITY=1 must be set for multi-GPU IPC configs. "
+                f"Got trainer_procs={trainer_procs}, generator_tp={generator_tp}. "
+                "Set: export FORGE_IPC_GPU_VISIBILITY=1"
+            )
+        else:
+            logger.warning(
+                "FORGE_IPC_GPU_VISIBILITY=1 not set. "
+                "IPC weight sync may fail for multi-GPU configs. "
+                "Set: export FORGE_IPC_GPU_VISIBILITY=1"
+            )
 
     # IPC only works for single-node deployments
     trainer_hosts = cfg.get("actors", {}).get("trainer", {}).get("hosts", 1)
@@ -178,20 +190,20 @@ async def main(cfg: DictConfig):
     print("All services initialized successfully!")
     shutdown_event = asyncio.Event()
 
-    # Initialize TorchStore (needed for baseline comparison and potentially other uses)
-    # For IPC mode, TorchStore is still initialized but not used for weight sync
+    # Initialize TorchStore only when needed (baseline mode)
+    # IPC mode bypasses TorchStore entirely, so skip the initialization overhead
     trainer_num_procs = cfg.actors.trainer["procs"]
     trainer_host_mesh_name = cfg.actors.trainer["mesh_name"]
     trainer_hosts = await provisioner.get_host_mesh(trainer_host_mesh_name)
-    await ts.initialize(
-        mesh=trainer_hosts.spawn_procs(per_host={"procs": trainer_num_procs}),
-        strategy=ts.LocalRankStrategy(),
-    )
 
-    if use_ipc:
-        print("TorchStore initialized (available for fallback, but IPC will be used for weight sync)")
-    else:
+    if not use_ipc:
+        await ts.initialize(
+            mesh=trainer_hosts.spawn_procs(per_host={"procs": trainer_num_procs}),
+            strategy=ts.LocalRankStrategy(),
+        )
         print("TorchStore initialized with local rank strategy (baseline mode)")
+    else:
+        print("IPC weight sync enabled - skipping TorchStore initialization")
 
     # Track weight sync timing for comparison
     weight_sync_times = []

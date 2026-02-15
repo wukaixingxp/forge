@@ -43,6 +43,7 @@ class ForgeWorkerWrapper(WorkerWrapper):
         super().__init__(vllm_config)
         self._torchstore_controller = None
         self._torchstore_client: Optional[LocalClient] = None
+        self._cached_param_map = None
 
     @endpoint
     def set_torchstore_controller(self, controller) -> None:
@@ -313,7 +314,9 @@ class ForgeWorkerWrapper(WorkerWrapper):
 
         # Build mapping from HF names to model parameters
         # vLLM uses different naming, so we need to map
-        param_map = self._build_param_map(model)
+        if self._cached_param_map is None:
+            self._cached_param_map = self._build_param_map(model)
+        param_map = self._cached_param_map
         logger.info(f"[IPC-Sliced] Built param map with {len(param_map)} entries")
 
         for name, handle in ipc_handles.items():
@@ -402,11 +405,14 @@ class ForgeWorkerWrapper(WorkerWrapper):
         )
 
         model = self.worker.model_runner.model
-        param_map = self._build_param_map(model)
+        if self._cached_param_map is None:
+            self._cached_param_map = self._build_param_map(model)
+        param_map = self._cached_param_map
         loaded_count = 0
 
         # Get all parameter names from first shard (all ranks should have same params)
-        first_rank_handles = shard_handles.get(0, {})
+        first_rank = min(shard_handles.keys())
+        first_rank_handles = shard_handles[first_rank]
         param_names = list(first_rank_handles.keys())
         logger.info(f"[IPC-Sharded] Processing {len(param_names)} parameters")
 
@@ -595,14 +601,26 @@ class ForgeWorkerWrapper(WorkerWrapper):
         model = self.worker.model_runner.model
         sample_params = {}
 
-        # Sample a few parameters from different layers
-        sample_names = [
-            "model.layers.0.self_attn.qkv_proj.weight",
-            "model.layers.0.mlp.gate_up_proj.weight",
-            "model.layers.17.self_attn.qkv_proj.weight",  # Middle layer
-            "model.layers.35.self_attn.qkv_proj.weight",  # Last layer
-            "model.embed_tokens.weight",
-        ]
+        # Dynamically find layer indices from the model
+        import re
+        layer_indices = set()
+        for name in dict(model.named_parameters()).keys():
+            match = re.search(r'model\.layers\.(\d+)\.', name)
+            if match:
+                layer_indices.add(int(match.group(1)))
+
+        if layer_indices:
+            max_layer = max(layer_indices)
+            mid_layer = max_layer // 2
+            sample_names = [
+                "model.layers.0.self_attn.qkv_proj.weight",
+                "model.layers.0.mlp.gate_up_proj.weight",
+                f"model.layers.{mid_layer}.self_attn.qkv_proj.weight",
+                f"model.layers.{max_layer}.self_attn.qkv_proj.weight",
+                "model.embed_tokens.weight",
+            ]
+        else:
+            sample_names = ["model.embed_tokens.weight"]
 
         for name, param in model.named_parameters():
             if name in sample_names or len(sample_params) < 5:
