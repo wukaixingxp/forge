@@ -376,11 +376,11 @@ class ForgeWorkerWrapper(WorkerWrapper):
         fsdp_size: int,
         tp_size: int,
     ) -> int:
-        """Receive FSDP shards from all trainer ranks, combine, and slice for TP.
+        """Receive FSDP shards from all trainer ranks, combine, and load via model.load_weights.
 
         This endpoint is used when both FSDP and TP are > 1. Instead of having
         the trainer do an all_gather (expensive), each trainer rank sends its
-        shard with metadata. Workers combine shards and slice for TP locally.
+        shard with metadata. Workers combine shards and batch-load via model.load_weights.
 
         Args:
             policy_version: Version number for these weights
@@ -405,10 +405,12 @@ class ForgeWorkerWrapper(WorkerWrapper):
         )
 
         model = self.worker.model_runner.model
+        loaded_count = 0
+
+        # Phase 4: Build param_map for fast-path routing
         if self._cached_param_map is None:
             self._cached_param_map = self._build_param_map(model)
         param_map = self._cached_param_map
-        loaded_count = 0
 
         # Get all parameter names from first shard (all ranks should have same params)
         first_rank = min(shard_handles.keys())
@@ -416,14 +418,35 @@ class ForgeWorkerWrapper(WorkerWrapper):
         param_names = list(first_rank_handles.keys())
         logger.info(f"[IPC-Sharded] Processing {len(param_names)} parameters")
 
+        # Compute target device once (same for all params)
+        target_device = f"cuda:{rank % torch.cuda.device_count()}"
+
+        # Phase 3: Create CUDA stream for async cross-GPU copies
+        copy_stream = torch.cuda.Stream(device=target_device)
+
+        # Batch for model.load_weights (renamed to merged_batch for clarity)
+        merged_batch = []
+        batch_size = 32
+
         for param_name in param_names:
             try:
+                mapping = param_map.get(param_name)
+
+                # Phase 4: Fast path for non-merged params
+                if mapping is not None and not isinstance(mapping, tuple):
+                    param = mapping
+                    if self._try_scatter_direct(
+                        param_name, param, shard_handles, shard_metadata,
+                        tp_rank, tp_size, fsdp_size, first_rank,
+                        target_device, copy_stream
+                    ):
+                        loaded_count += 1
+                        continue
+
+                # Standard path: combine all shards for model.load_weights
                 # Collect and reconstruct shards from all FSDP ranks
                 shards = []
                 offsets_list = []
-
-                # Determine target device for this worker
-                target_device = f"cuda:{rank % torch.cuda.device_count()}"
 
                 for fsdp_rank in range(fsdp_size):
                     if fsdp_rank not in shard_handles:
@@ -437,59 +460,49 @@ class ForgeWorkerWrapper(WorkerWrapper):
                         logger.warning(f"[IPC-Sharded] Missing handle/metadata for {param_name} from rank {fsdp_rank}")
                         continue
 
-                    # Reconstruct tensor from IPC handle and move to worker's GPU
-                    shard_tensor = handle.reconstruct_tensor().to(target_device).clone()
+                    # Phase 3: Wrap shard reconstruction with CUDA stream
+                    with torch.cuda.stream(copy_stream):
+                        shard_tensor = handle.reconstruct_tensor()
+                        if str(shard_tensor.device) != target_device:
+                            shard_tensor = shard_tensor.to(target_device, non_blocking=True)
+                        else:
+                            shard_tensor = shard_tensor.clone()
+
                     shards.append(shard_tensor)
                     offsets_list.append(meta["offsets"])
-
-                    # Debug: log shard info for first few params
-                    if "q_proj" in param_name and ".0." in param_name:
-                        logger.info(
-                            f"[IPC-Debug] {param_name} from rank {fsdp_rank}: "
-                            f"shard_shape={tuple(shard_tensor.shape)}, "
-                            f"offsets={meta['offsets']}, global={meta['global_shape']}"
-                        )
 
                 if len(shards) != fsdp_size:
                     logger.warning(f"[IPC-Sharded] Incomplete shards for {param_name}: got {len(shards)}/{fsdp_size}")
                     continue
 
+                # Phase 3: Synchronize before combining shards
+                copy_stream.synchronize()
+
                 # Get global shape from first shard's metadata
-                global_shape = shard_metadata[0][param_name]["global_shape"]
+                global_shape = shard_metadata[first_rank][param_name]["global_shape"]
 
                 # Combine shards into full tensor based on offsets
                 # FSDP typically shards along dim 0 (rows)
                 full_tensor = self._combine_shards(shards, offsets_list, global_shape)
 
-                # Debug: log combined tensor shape for first few params
-                if "q_proj" in param_name and ".0." in param_name:
-                    logger.info(
-                        f"[IPC-Debug] {param_name} combined: "
-                        f"shape={tuple(full_tensor.shape)}, expected_global={global_shape}"
-                    )
+                # Phase 2: Batch full tensors for model.load_weights
+                merged_batch.append((param_name, full_tensor))
+                loaded_count += 1
 
-                # Now slice for TP and load
-                if param_name in param_map:
-                    mapping = param_map[param_name]
-
-                    if isinstance(mapping, tuple):
-                        # Merged weights (qkv_proj, gate_up_proj)
-                        merge_type, param = mapping
-                        self._copy_to_merged_param(merge_type, full_tensor, param, tp_rank, tp_size)
-                        loaded_count += 1
-                    else:
-                        param = mapping
-                        # Slice for TP if needed
-                        if full_tensor.shape != param.shape:
-                            full_tensor = self._slice_for_tp(param_name, full_tensor, param.shape, tp_rank, tp_size)
-                        param.data.copy_(full_tensor)
-                        loaded_count += 1
-                else:
-                    logger.warning(f"[IPC-Sharded] Parameter not found in model: {param_name}")
+                if len(merged_batch) >= batch_size:
+                    model.load_weights(merged_batch)
+                    merged_batch = []
 
             except Exception as e:
                 import traceback
                 logger.warning(f"[IPC-Sharded] Failed to load {param_name}: {e}\n{traceback.format_exc()}")
+
+        # Load remaining batch
+        if merged_batch:
+            model.load_weights(merged_batch)
+
+        # Phase 3: Final synchronization before returning
+        copy_stream.synchronize()
 
         logger.info(f"[IPC-Sharded] Loaded {loaded_count} weights for TP rank {tp_rank}")
         return loaded_count
@@ -527,6 +540,153 @@ class ForgeWorkerWrapper(WorkerWrapper):
         full_tensor = torch.cat(sorted_shards, dim=0)
 
         return full_tensor
+
+    def _try_scatter_direct(
+        self,
+        param_name: str,
+        param: "torch.nn.Parameter",
+        shard_handles: dict,
+        shard_metadata: dict,
+        tp_rank: int,
+        tp_size: int,
+        fsdp_size: int,
+        first_rank: int,
+        target_device: str,
+        copy_stream: "torch.cuda.Stream",
+    ) -> bool:
+        """Try to copy FSDP shards directly to param without combining all shards.
+
+        Returns True if direct scatter succeeded, False to fall back to standard path.
+        Handles three cases:
+        1. Replicated params (shapes match) — copy one shard
+        2. Column-parallel (TP dim 0, same as FSDP) — copy only overlapping shards
+        3. Row-parallel (TP dim 1, different from FSDP dim 0) — slice columns first, then cat
+        """
+        import torch
+
+        meta_first = shard_metadata[first_rank].get(param_name)
+        if meta_first is None:
+            return False
+
+        global_shape = tuple(meta_first["global_shape"])
+        param_shape = tuple(param.shape)
+
+        # Case 1: Replicated (param shape == global shape, no TP slicing needed)
+        if param_shape == global_shape:
+            handle = shard_handles[first_rank].get(param_name)
+            if handle is None:
+                return False
+            with torch.cuda.stream(copy_stream):
+                shard = handle.reconstruct_tensor()
+                if str(shard.device) != target_device:
+                    shard = shard.to(target_device, non_blocking=True)
+                else:
+                    shard = shard.clone()
+            copy_stream.synchronize()
+
+            if fsdp_size == 1:
+                # Single shard IS the full tensor
+                param.data.copy_(shard)
+            else:
+                # Multiple shards but replicated — any single shard may be a subset.
+                # Need to combine all if shard != global shape. Fall back.
+                if tuple(shard.shape) == global_shape:
+                    param.data.copy_(shard)
+                else:
+                    return False
+            return True
+
+        # Case 2: Column-parallel (param dim 0 < global dim 0, dim 1 matches)
+        # TP slices rows (dim 0). FSDP also shards rows (dim 0).
+        # Each TP rank only needs the FSDP shard(s) that overlap its row range.
+        if (len(global_shape) >= 2 and len(param_shape) >= 2
+                and param_shape[0] < global_shape[0]
+                and param_shape[-1] == global_shape[-1]):
+            tp_chunk = param_shape[0]
+            tp_start = tp_rank * tp_chunk
+            tp_end = tp_start + tp_chunk
+
+            # Collect overlapping shard regions
+            parts = []  # (dst_offset, src_slice_start, src_slice_end, fsdp_rank)
+            for fsdp_rank in range(fsdp_size):
+                meta = shard_metadata.get(fsdp_rank, {}).get(param_name)
+                if meta is None:
+                    return False
+                shard_start = meta["offsets"][0]
+                shard_rows = meta["local_shape"][0]
+                shard_end = shard_start + shard_rows
+
+                # Overlap between [tp_start, tp_end) and [shard_start, shard_end)
+                ov_start = max(tp_start, shard_start)
+                ov_end = min(tp_end, shard_end)
+                if ov_start < ov_end:
+                    parts.append((
+                        ov_start - tp_start,      # dst offset in param
+                        ov_start - shard_start,    # src start in shard
+                        ov_end - shard_start,      # src end in shard
+                        fsdp_rank,
+                    ))
+
+            if not parts:
+                return False
+
+            # Reconstruct only needed shards and scatter directly to param
+            for dst_offset, src_start, src_end, fsdp_rank in parts:
+                handle = shard_handles[fsdp_rank].get(param_name)
+                if handle is None:
+                    return False
+                with torch.cuda.stream(copy_stream):
+                    shard = handle.reconstruct_tensor()
+                    if str(shard.device) != target_device:
+                        shard = shard.to(target_device, non_blocking=True)
+                    else:
+                        shard = shard.clone()
+                copy_stream.synchronize()
+
+                src_slice = shard[src_start:src_end]
+                dst_end = dst_offset + (src_end - src_start)
+                param.data[dst_offset:dst_end].copy_(src_slice)
+
+            return True
+
+        # Case 3: Row-parallel (param dim 1 < global dim 1, dim 0 matches)
+        # TP slices columns (dim 1). FSDP shards rows (dim 0).
+        # Need all shards (all rows), but can slice columns from each FIRST
+        # to avoid allocating the full combined tensor.
+        if (len(global_shape) == 2 and len(param_shape) == 2
+                and param_shape[0] == global_shape[0]
+                and param_shape[1] < global_shape[1]):
+            tp_chunk = param_shape[1]
+            tp_start = tp_rank * tp_chunk
+            tp_end = tp_start + tp_chunk
+
+            sliced_shards = []
+            for fsdp_rank in range(fsdp_size):
+                handle = shard_handles[fsdp_rank].get(param_name)
+                meta = shard_metadata[fsdp_rank].get(param_name)
+                if handle is None or meta is None:
+                    return False
+
+                with torch.cuda.stream(copy_stream):
+                    shard = handle.reconstruct_tensor()
+                    if str(shard.device) != target_device:
+                        shard = shard.to(target_device, non_blocking=True)
+                    else:
+                        shard = shard.clone()
+                copy_stream.synchronize()
+
+                # Slice columns first (narrow is a view, no copy)
+                sliced = shard[:, tp_start:tp_end].contiguous()
+                sliced_shards.append((meta["offsets"][0], sliced))
+
+            # Sort by row offset and cat
+            sliced_shards.sort(key=lambda x: x[0])
+            combined = torch.cat([s for _, s in sliced_shards], dim=0)
+            param.data.copy_(combined)
+            return True
+
+        # Not a recognized pattern — use standard path
+        return False
 
     async def _get_torchstore_client(self) -> LocalClient:
         """Get or create a LocalClient using the passed Controller reference.
