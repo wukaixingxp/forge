@@ -590,18 +590,21 @@ class Generator(ForgeActor):
     ) -> dict:
         """Update weights using CUDA IPC direct transfer from trainer.
 
-        This is Phase 2 optimization that bypasses TorchStore entirely for
-        same-node deployments. The trainer pushes CUDA IPC handles directly
-        to generator workers, enabling GPU-direct memory access without
-        serialization.
+        Bypasses TorchStore entirely for same-node deployments. The trainer
+        exports CUDA IPC handles (66 bytes each) which generator workers use
+        for GPU-direct memory access without serialization.
 
-        Key optimizations over Phase 1:
-        1. Skip TorchStore entirely - direct trainer -> worker communication
-        2. Skip Python serialization - use 66-byte CUDA IPC handles
-        3. For non-FSDP: skip state_dict() entirely on trainer
+        Key optimization: IPC handle creation on the trainer is overlapped with
+        pause_generation on the generator, so the trainer prepares handles while
+        in-flight generation requests complete. This can save significant time
+        when pause_generation is the bottleneck (~9.7s in benchmarks).
 
-        Note: For FSDP trainers (multi-GPU), only rank 0 performs the push
-        after gathering shards via state_dict().
+        All paths (FSDP and non-FSDP) use get_shard_ipc_handles for handle
+        creation and receive_shards_ipc for loading, providing a unified flow:
+        1. Start handle creation on trainer (async)
+        2. Start pause_generation on generator (async)
+        3. Wait for both to complete
+        4. Send handles to workers for loading
 
         Args:
             version: Policy version being pushed
@@ -615,10 +618,51 @@ class Generator(ForgeActor):
 
         logger.info(f"Starting IPC weight update to v{version}")
 
+        # Detect trainer topology BEFORE starting overlap
+        try:
+            trainer_ndslice = trainer._shape.ndslice
+            trainer_procs = trainer_ndslice.sizes[0] if trainer_ndslice.sizes else 1
+        except (AttributeError, IndexError):
+            trainer_procs = 1
+
+        tp_size = self.vllm_config.parallel_config.tensor_parallel_size
+        logger.info(f"[IPC] Generator TP size: {tp_size}, Trainer FSDP size: {trainer_procs}")
+
+        # Phase 1: Overlap handle creation with pause_generation
+        # Handle creation runs on trainer GPUs and doesn't touch the generator
+        # model, so it's safe to run while in-flight requests complete.
+        async def _collect_handles():
+            """Collect IPC handles from all trainer ranks in parallel."""
+            if trainer_procs > 1:
+                # FSDP: collect shards from ALL ranks
+                shard_tasks = []
+                for rank in range(trainer_procs):
+                    trainer_rank = trainer.slice(procs=rank)
+                    shard_tasks.append(
+                        trainer_rank.get_shard_ipc_handles.call_one(
+                            policy_version=version,
+                        )
+                    )
+                return await asyncio.gather(*shard_tasks)
+            else:
+                # Non-FSDP: single trainer returns full tensors as a single "shard"
+                result = await trainer.get_shard_ipc_handles.call_one(
+                    policy_version=version,
+                )
+                return [result]
+
+        handle_task = asyncio.create_task(_collect_handles())
+
         pause_start = time.perf_counter()
-        await self.llm.pause_generation(
-            wait_for_inflight_requests=True, clear_cache=True
+        pause_task = asyncio.create_task(
+            self.llm.pause_generation(
+                wait_for_inflight_requests=True, clear_cache=True
+            )
         )
+
+        # Wait for both concurrently - handle creation overlaps with pause
+        shard_results, _ = await asyncio.gather(handle_task, pause_task)
+
         pause_duration = time.perf_counter() - pause_start
         record_metric(
             "generator_perf/update_weights_ipc/pause_generation_duration_s",
@@ -626,65 +670,32 @@ class Generator(ForgeActor):
             Reduce.MEAN,
         )
 
+        # Phase 2: Send handles to workers (generation is now paused)
         try:
             load_start = time.perf_counter()
 
-            # Get trainer mesh size to detect FSDP
-            try:
-                trainer_ndslice = trainer._shape.ndslice
-                trainer_procs = trainer_ndslice.sizes[0] if trainer_ndslice.sizes else 1
-            except (AttributeError, IndexError):
-                trainer_procs = 1
+            logger.info(f"[IPC] Collected handles from {len(shard_results)} trainer rank(s)")
 
-            # Get generator's TP size for proper slicing
-            tp_size = self.vllm_config.parallel_config.tensor_parallel_size
-            logger.info(f"[IPC] Generator TP size: {tp_size}, Trainer FSDP size: {trainer_procs}")
+            # Organize by fsdp_rank: {fsdp_rank: {param_name: handle}}
+            all_shard_handles = {}
+            all_shard_metadata = {}
+            for shard_result in shard_results:
+                fsdp_rank = shard_result["fsdp_rank"]
+                all_shard_handles[fsdp_rank] = shard_result["handles"]
+                all_shard_metadata[fsdp_rank] = shard_result["metadata"]
 
-            if trainer_procs > 1:
-                # FSDP (with or without TP): Collect shards from ALL trainer ranks
-                # and let workers combine them. This avoids triggering all_gather
-                # on the trainer side and correctly handles DTensor local shards.
-                # Note: Even for TP=1, we must collect all shards because rank 0's
-                # state_dict() returns DTensors (local shards), not full tensors.
-                logger.info(f"[IPC] FSDP={trainer_procs} + TP={tp_size}: collecting shards from all ranks")
-
-                # Call get_shard_ipc_handles on ALL trainer ranks in parallel
-                import asyncio
-                shard_tasks = []
-                for rank in range(trainer_procs):
-                    trainer_rank = trainer.slice(procs=rank)
-                    task = trainer_rank.get_shard_ipc_handles.call_one(
-                        policy_version=version,
-                    )
-                    shard_tasks.append(task)
-
-                shard_results = await asyncio.gather(*shard_tasks)
-                logger.info(f"[IPC] Collected shards from {len(shard_results)} trainer ranks")
-
-                # Organize by fsdp_rank: {fsdp_rank: {param_name: handle}}
-                all_shard_handles = {}
-                all_shard_metadata = {}
-                for shard_result in shard_results:
-                    fsdp_rank = shard_result["fsdp_rank"]
-                    all_shard_handles[fsdp_rank] = shard_result["handles"]
-                    all_shard_metadata[fsdp_rank] = shard_result["metadata"]
-
-                # Send all shards to workers - they will combine and slice for TP
-                await self.workers.receive_shards_ipc.call(
-                    policy_version=version,
-                    shard_handles=all_shard_handles,
-                    shard_metadata=all_shard_metadata,
-                    fsdp_size=trainer_procs,
-                    tp_size=tp_size,
-                )
-                result = {"param_count": len(shard_results[0]["handles"]), "fsdp_size": trainer_procs}
-            else:
-                # Single-rank trainer (no FSDP)
-                result = await trainer.push_weights_ipc.call_one(
-                    policy_version=version,
-                    generator_workers=self.workers,
-                    tp_size=tp_size,
-                )
+            # Workers combine shards (if FSDP) and slice for TP (if needed)
+            await self.workers.receive_shards_ipc.call(
+                policy_version=version,
+                shard_handles=all_shard_handles,
+                shard_metadata=all_shard_metadata,
+                fsdp_size=trainer_procs,
+                tp_size=tp_size,
+            )
+            result = {
+                "param_count": len(shard_results[0]["handles"]),
+                "fsdp_size": trainer_procs,
+            }
 
             load_duration = time.perf_counter() - load_start
             record_metric(
