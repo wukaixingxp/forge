@@ -1,8 +1,6 @@
-# GPU-Direct Weight Sync GRPO - Qwen3-4B with CUDA IPC (Quick Test)
-# Trainer: 2 GPUs (FSDP), Generator: 2 GPUs (TP=2)
-#
-# This is a smaller model config for quick smoke testing.
-# Use qwen3_32b_2x2.yaml for real benchmarking.
+# GPU-Direct Weight Sync GRPO - Qwen3-4B with CUDA IPC
+# Trainer: 1 GPU (no FSDP), Generator: 1 GPU (TP=1)
+# Optimized for throughput: multi-step training, demand-driven rollouts
 #
 # Usage:
 #   export FORGE_IPC_GPU_VISIBILITY=1
@@ -13,16 +11,17 @@ weight_sync:
   use_ipc: true  # Enable CUDA IPC direct transfer
 
 # Global configuration
-group_size: 4
+group_size: 8
 local_batch_size: 2
-max_req_tokens: 512
-max_res_tokens: 512
+max_req_tokens: 256   # GSM8K prompts are short, 256 is sufficient
+max_res_tokens: 2048  # Let model generate freely, reduce truncation
 model: "Qwen/Qwen3-4B"
-off_by_n: 1
+off_by_n: 2           # Allow 1-step-stale episodes to reduce buffer starvation
 compile: false
 
 # Main loop configuration
-rollout_threads: 1
+rollout_threads: 4    # Concurrent rollout coroutines for higher gen throughput
+weight_sync_interval: 4  # Train 4 steps per weight sync to amortize pause overhead
 
 # Observability configuration
 metric_logging:
@@ -41,14 +40,14 @@ dataset:
   streaming: true
   model: ${model}
 
-# Generator configuration (TP=2, 2 GPUs)
+# Generator configuration (TP=1, 1 GPU - no parallelism overhead)
 generator:
   engine_args:
     model: ${model}
-    tensor_parallel_size: 2
+    tensor_parallel_size: 1
     pipeline_parallel_size: 1
     enforce_eager: true
-    max_model_len: 2048
+    max_model_len: 4096
     gpu_memory_utilization: 0.85
   sampling_params:
     n: ${group_size}
@@ -57,7 +56,7 @@ generator:
     top_p: 1.0
     logprobs: 1
 
-# Trainer configuration (FSDP=2, 2 GPUs)
+# Trainer configuration (FSDP=1, 1 GPU - no sharding overhead)
 trainer:
   model:
     name: qwen3
@@ -73,21 +72,21 @@ trainer:
     local_batch_size: ${local_batch_size}
     seq_len: ${sum:${max_req_tokens},${max_res_tokens}}
     max_norm: 1.0
-    steps: 20  # Quick test
+    steps: 20  # 20 train steps = 5 weight syncs at interval=4
     dtype: bfloat16
     gc_freq: 1
   compile:
     enable: false
   parallelism:
     data_parallel_replicate_degree: 1
-    data_parallel_shard_degree: 2  # FSDP across 2 GPUs
+    data_parallel_shard_degree: 1  # No FSDP - single GPU
     tensor_parallel_degree: 1
     pipeline_parallel_degree: 1
     context_parallel_degree: 1
     expert_parallel_degree: 1
     disable_loss_parallel: true
   checkpoint:
-    enable: false  # Disable for benchmark runs to avoid DCP loading issues with FSDP
+    enable: false
   activation_checkpoint:
     mode: selective
     selective_ac_option: op
@@ -96,12 +95,12 @@ trainer:
 replay_buffer:
   batch_size: ${local_batch_size}
   max_policy_age: ${off_by_n}
-  dp_size: ${trainer.parallelism.data_parallel_shard_degree}
+  dp_size: 1  # Single trainer
 
-# Resource allocations (4 GPUs total)
+# Resource allocations (2 GPUs: 1 trainer + 1 generator)
 services:
   generator:
-    procs: 2
+    procs: 1
     num_replicas: 1
     with_gpus: true
     mesh_name: generator
@@ -117,7 +116,7 @@ actors:
     with_gpus: false
     mesh_name: dataset
   trainer:
-    procs: 2
+    procs: 1  # Single GPU trainer
     with_gpus: true
     mesh_name: trainer
   replay_buffer:

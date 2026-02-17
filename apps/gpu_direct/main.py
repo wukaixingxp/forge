@@ -208,11 +208,21 @@ async def main(cfg: DictConfig):
     # Track weight sync timing for comparison
     weight_sync_times = []
 
+    # Demand-driven rollout config
+    train_batch_size = cfg.local_batch_size * cfg.replay_buffer.dp_size
+    max_buffer_episodes = cfg.get("max_buffer_episodes", train_batch_size * 4)
+
     # ---- Core RL loops ---- #
     async def continuous_rollouts():
         rollout_count = 0
         pad_id = await dataloader.pad_token.call_one()
         while not shutdown_event.is_set():
+            # Demand-driven: pause rollouts when buffer has enough episodes
+            buffer_size = await replay_buffer._numel.call_one()
+            if buffer_size >= max_buffer_episodes:
+                await asyncio.sleep(0.5)
+                continue
+
             t = Tracer("main_perf/continuous_rollouts")
             t.start()
             sample = await dataloader.sample.call_one()
@@ -223,6 +233,17 @@ async def main(cfg: DictConfig):
             prompt, target = sample["request"], sample["target"]
             responses: list[Completion] = await generator.generate.route(prompt)
             t.step("policy_generation")
+
+            # Log a sample of generated output for quality monitoring
+            if rollout_count % 5 == 0 and responses:
+                sample_resp = responses[0]
+                truncated_text = sample_resp.text[:300] + ("..." if len(sample_resp.text) > 300 else "")
+                logger.info(
+                    f"[Rollout #{rollout_count}] prompt={prompt[:100]}... | "
+                    f"stop={sample_resp.stop_reason} | "
+                    f"tokens={sample_resp.token_ids.shape[0]} | "
+                    f"response={truncated_text}"
+                )
 
             # Construct episodes and calculate rewards
             episodes = []
@@ -300,33 +321,49 @@ async def main(cfg: DictConfig):
                     "episode/min_response_tokens", response_tokens, Reduce.MIN
                 )
 
-            # drop episodes if
-            # 1> reward std-dev is very small (including all 0s and all 1s)
-            # 2> any response was truncated (didn't end with EOS)
-            # TODO: change it to filter only truncated episodes instead of dropping entire group
-            rewards = [e.reward for e in episodes]
-            rewards_std = torch.std(torch.tensor(rewards))
-            is_low_variance = rewards_std < 1e-3
-            num_truncated = sum(
-                1 for e in episodes if e.completion.stop_reason == "length"
-            )
-            is_truncated = num_truncated > 0
-            drop = is_low_variance or is_truncated
+            # Filter individual truncated episodes instead of dropping entire group
+            num_before_filter = len(episodes)
+            surviving_indices = [
+                i for i, e in enumerate(episodes)
+                if e.completion.stop_reason != "length"
+            ]
+            num_truncated = num_before_filter - len(surviving_indices)
 
-            n = len(episodes)
-            record_metric(
-                "main/continuous_rollouts/episodes_dropped/low_variance",
-                n if is_low_variance else 0,
-                Reduce.SUM,
-            )
+            # Keep only non-truncated episodes and their input_ids rows
+            if num_truncated > 0:
+                episodes = [episodes[i] for i in surviving_indices]
+                input_ids = input_ids[surviving_indices]
+
+            # Check reward variance on survivors (need >= 2 for meaningful gradient)
+            drop = False
+            is_low_variance = False
+            if len(episodes) < 2:
+                drop = True
+            else:
+                rewards = [e.reward for e in episodes]
+                rewards_std = torch.std(torch.tensor(rewards))
+                is_low_variance = rewards_std < 1e-3
+                if is_low_variance:
+                    drop = True
+
             record_metric(
                 "main/continuous_rollouts/episodes_dropped/truncated",
                 num_truncated,
                 Reduce.SUM,
             )
             record_metric(
+                "main/continuous_rollouts/episodes_dropped/low_variance",
+                len(episodes) if is_low_variance else 0,
+                Reduce.SUM,
+            )
+            record_metric(
                 "main/continuous_rollouts/episodes_dropped/total",
-                n if drop else 0,
+                num_truncated + (len(episodes) if drop else 0),
+                Reduce.SUM,
+            )
+            record_metric(
+                "main/continuous_rollouts/episodes_survived",
+                0 if drop else len(episodes),
                 Reduce.SUM,
             )
 
@@ -376,9 +413,12 @@ async def main(cfg: DictConfig):
             )
             t.stop()
 
+    weight_sync_interval = cfg.get("weight_sync_interval", 1)
+
     async def continuous_training():
         nonlocal weight_sync_times
         training_step = 0
+        policy_version = 0  # Incremented only on weight sync
         restart_tracer = True  # Flag to control when to restart tracer
 
         while (
@@ -392,7 +432,7 @@ async def main(cfg: DictConfig):
                 restart_tracer = False
 
             batch = await replay_buffer.sample.call_one(
-                curr_policy_version=training_step
+                curr_policy_version=policy_version
             )
             if batch is None:
                 await asyncio.sleep(0.1)
@@ -403,44 +443,42 @@ async def main(cfg: DictConfig):
                 training_step += 1
                 t.step("train_step")
 
-                # === Weight Synchronization ===
-                sync_start = time.perf_counter()
+                # === Weight Synchronization (every N train steps) ===
+                if training_step % weight_sync_interval == 0:
+                    sync_start = time.perf_counter()
+                    policy_version += 1
 
-                if use_ipc:
-                    # Phase 2: GPU-Direct IPC weight sync
-                    # Single call - trainer pushes IPC handles directly to generator workers
-                    await generator.update_weights_ipc.fanout(
-                        version=training_step,
-                        trainer=trainer
-                    )
-                    t.step("update_weights_ipc")
-                    # No drop_weights needed - IPC doesn't use TorchStore
-                else:
-                    # Baseline: TorchStore-based weight sync
-                    await trainer.push_weights.call(training_step)
-                    t.step("push_weights")
+                    if use_ipc:
+                        await generator.update_weights_ipc.fanout(
+                            version=policy_version,
+                            trainer=trainer
+                        )
+                        t.step("update_weights_ipc")
+                    else:
+                        await trainer.push_weights.call(policy_version)
+                        t.step("push_weights")
 
-                    await generator.update_weights.fanout(training_step)
-                    t.step("update_weights")
+                        await generator.update_weights.fanout(policy_version)
+                        t.step("update_weights")
 
-                    if training_step >= 2:
-                        await drop_weights(training_step - 1)
-                        t.step("drop_weights")
+                        if policy_version >= 2:
+                            await drop_weights(policy_version - 1)
+                            t.step("drop_weights")
 
-                sync_time = time.perf_counter() - sync_start
-                weight_sync_times.append(sync_time)
+                    sync_time = time.perf_counter() - sync_start
+                    weight_sync_times.append(sync_time)
 
-                # Log weight sync timing
-                record_metric("weight_sync/time_seconds", sync_time, Reduce.MEAN)
-                record_metric("weight_sync/use_ipc", 1.0 if use_ipc else 0.0, Reduce.MAX)
+                    record_metric("weight_sync/time_seconds", sync_time, Reduce.MEAN)
+                    record_metric("weight_sync/use_ipc", 1.0 if use_ipc else 0.0, Reduce.MAX)
+                    record_metric("weight_sync/policy_version", policy_version, Reduce.MAX)
 
-                if training_step % 10 == 0:
-                    avg_sync_time = sum(weight_sync_times[-10:]) / min(10, len(weight_sync_times))
-                    mode = "IPC" if use_ipc else "TorchStore"
-                    logger.info(
-                        f"Step {training_step}: Weight sync ({mode}) avg={avg_sync_time:.3f}s, "
-                        f"last={sync_time:.3f}s"
-                    )
+                    if policy_version % 5 == 0:
+                        avg_sync_time = sum(weight_sync_times[-5:]) / min(5, len(weight_sync_times))
+                        mode = "IPC" if use_ipc else "TorchStore"
+                        logger.info(
+                            f"Step {training_step} (policy v{policy_version}): "
+                            f"Weight sync ({mode}) avg={avg_sync_time:.3f}s, last={sync_time:.3f}s"
+                        )
 
                 t.stop()
                 restart_tracer = True
